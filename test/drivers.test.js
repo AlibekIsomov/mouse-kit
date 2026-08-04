@@ -1,0 +1,215 @@
+/**
+ * Razer, Attack Shark and ATK — byte-level tests against a mock device.
+ *
+ * Ground truth:
+ *   Razer        openrazer/driver/razercommon.c (checksum = XOR of bytes 2..87),
+ *                razerchromacommon.c (class 0x04 / id 0x05 = set DPI, VARSTORE = 0x01)
+ *   Attack Shark HarukaYamamoto0/attack-shark-x11-driver docs/*.md
+ *   ATK          hub.atk.pro bundle (COMPX): report 8, 64-byte packet, [0] = command
+ */
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { createMockDevice, pad } from "./mock-hid.js";
+import { mockRazer, mockAttackShark, mockAtk } from "./mocks.js";
+import { razer } from "../public/drivers/razer.js";
+import { attackShark, DPI_TEMPLATE, checksum, dpiToBytes, bytesToDpi } from "../public/drivers/attackshark.js";
+import { atk } from "../public/drivers/atk.js";
+
+/* ============================ Razer ============================ */
+
+const xorCrc = bytes => bytes.slice(2, 88).reduce((a, b) => a ^ b, 0);
+
+test("razer: packet is 90 bytes with a valid XOR checksum", async () => {
+  const { dev } = mockRazer();
+  await razer.init(dev);
+  for (const packet of dev.sent) {
+    assert.equal(packet.reportId, 0x00, "razer uses feature report 0");
+    assert.equal(packet.bytes.length, 90);
+    assert.equal(packet.bytes[88], xorCrc(packet.bytes), "checksum byte [88] is wrong");
+  }
+});
+
+test("razer: setDpi writes VARSTORE and the DPI on both axes", async () => {
+  const { dev, stored } = mockRazer();
+  const state = await razer.init(dev);
+  dev.sent.length = 0;
+
+  assert.equal(await razer.writeDpi(dev, state, 1600), 1600);
+  assert.equal(stored.dpi, 1600);
+
+  const set = dev.sent.find(s => s.bytes[6] === 0x04 && s.bytes[7] === 0x05);
+  assert.ok(set, "no set-DPI packet");
+  assert.equal(set.bytes[5], 0x07, "dataSize must be 7");
+  // args: [varstore, dpiX hi, dpiX lo, dpiY hi, dpiY lo, 0, 0]
+  assert.deepEqual(set.bytes.slice(8, 15), [0x01, 0x06, 0x40, 0x06, 0x40, 0x00, 0x00]);
+});
+
+test("razer: report rate divisors are 1000/Hz", async () => {
+  const { dev, stored } = mockRazer({ rate: 1 });
+  const state = await razer.init(dev);
+  const rate = await razer.readRate(dev, state);
+
+  assert.deepEqual(rate.options.map(o => [o.hz, o.raw]), [[1000, 1], [500, 2], [250, 4], [125, 8]]);
+  assert.equal(await razer.writeRate(dev, state, 8), 8);
+  assert.equal(stored.rate, 8);
+});
+
+test("razer: a device that reports 'not supported' (0x05) throws instead of retrying blindly", async () => {
+  const dev = createMockDevice({ onFeatureRead: () => pad([0x05], 90) });
+  await assert.rejects(() => razer.init(dev), /did not respond/);
+});
+
+/* ========================= Attack Shark ========================= */
+
+test("attack shark: the factory template's own checksum is correct", () => {
+  assert.equal(checksum(DPI_TEMPLATE), (DPI_TEMPLATE[50] << 8) | DPI_TEMPLATE[51]);
+});
+
+/**
+ * Every row of docs/samples/dpi-stage-mask.md, which was captured from the real
+ * device. `high` is byte [16 + stage]; `double` is the stage bit in bytes [6]/[7].
+ * These rows are what proves the four different table strides are all correct.
+ */
+test("attack shark: DPI encoding matches every captured sample", () => {
+  const samples = [
+    // dpi,    x,    high, double
+    [50, 0x01, 0, 0],
+    [800, 0x12, 0, 0],
+    [5000, 0x75, 0, 0],
+    [10000, 0xeb, 0, 0],
+    [10100, 0x76, 1, 0],
+    [12000, 0x8d, 1, 0],
+    [12100, 0x8e, 0, 1],
+    [20000, 0xeb, 0, 1],
+    [20100, 0xeb, 1, 1],
+    [21000, 0x7b, 1, 1],
+    [22000, 0x81, 1, 1],
+  ];
+
+  for (const [dpi, x, high, double] of samples) {
+    assert.deepEqual(dpiToBytes(dpi), { x, y: high, double: !!double }, `encode ${dpi}`);
+    assert.equal(bytesToDpi(x, high, !!double), dpi, `decode ${dpi}`);
+  }
+});
+
+test("attack shark: 20000 and 20100 share a value byte but stay distinguishable", () => {
+  // Both encode to 0xeb with the double flag; only the high flag separates them.
+  assert.equal(bytesToDpi(0xeb, 0, true), 20000);
+  assert.equal(bytesToDpi(0xeb, 1, true), 20100);
+});
+
+test("attack shark: DPI is clamped to the documented 50..22000 range", () => {
+  assert.equal(bytesToDpi(...Object.values(dpiToBytes(0))), 50);
+  assert.equal(bytesToDpi(...Object.values(dpiToBytes(99999))), 22000);
+});
+
+test("attack shark: writing DPI keeps the block valid and recomputes the checksum", async () => {
+  const { dev } = mockAttackShark();
+  const state = await attackShark.init(dev);
+  dev.sent.length = 0;
+
+  await attackShark.writeDpi(dev, state, 1600);
+
+  const write = dev.sent.find(s => s.kind === "feature" && s.reportId === 0x04);
+  assert.ok(write, "no DPI block written");
+  assert.equal(write.bytes.length, 55, "payload is 56 bytes minus the report ID");
+
+  const block = [0x04, ...write.bytes];
+  assert.equal(block[1], 0x38, "length byte must stay 0x38");
+  assert.equal(checksum(block), (block[50] << 8) | block[51], "checksum was not recomputed");
+  assert.equal(block[7], block[6], "byte [7] must mirror byte [6]");
+});
+
+test("attack shark: only the active stage changes, the rest of the block is untouched", async () => {
+  const { dev } = mockAttackShark();
+  const state = await attackShark.init(dev);
+  const before = Array.from(DPI_TEMPLATE);
+  const stage = attackShark.stage(state);                              // template says stage index 1
+
+  await attackShark.writeDpi(dev, state, 1600);
+  const block = [0x04, ...dev.sent.find(s => s.kind === "feature" && s.reportId === 0x04).bytes];
+
+  for (let i = 0; i < 56; i++) {
+    const mutable = [6, 7, 50, 51, 8 + stage, 16 + stage].includes(i);
+    if (!mutable) assert.equal(block[i], before[i], `byte [${i}] must not change`);
+  }
+});
+
+test("attack shark: report rate packet matches the documented capture", async () => {
+  const { dev } = mockAttackShark();
+  const state = await attackShark.init(dev);
+  dev.sent.length = 0;
+
+  await attackShark.writeRate(dev, state, 0x01);                       // 1000 Hz
+  const write = dev.sent.find(s => s.kind === "feature" && s.reportId === 0x06);
+  // Upstream capture: 06 09 01 01 fe 00 00 00 00  (report ID stripped by WebHID)
+  assert.deepEqual(write.bytes, [0x09, 0x01, 0x01, 0xfe, 0x00, 0x00, 0x00, 0x00]);
+});
+
+test("attack shark: an unreadable device asks for confirmation before writing", async () => {
+  const { dev } = mockAttackShark({ live: false });
+  const state = await attackShark.init(dev);
+  assert.equal(state.needsConfirm, true, "must flag that the real config was never read");
+  assert.match(state.confirmText, /overwrite/i);
+});
+
+/* ============================= ATK ============================= */
+
+test("atk: packets are 64 bytes on feature report 8", async () => {
+  const { dev } = mockAtk();
+  await atk.init(dev);
+  for (const packet of dev.sent) {
+    assert.equal(packet.reportId, 8);
+    assert.equal(packet.bytes.length, 64);
+  }
+});
+
+test("atk: setDpi sends a plain little-endian 16-bit value", async () => {
+  const { dev, stored } = mockAtk();
+  const state = await atk.init(dev);
+  dev.sent.length = 0;
+
+  assert.equal(await atk.writeDpi(dev, state, 1600), 1600);
+  assert.equal(stored.dpi[0], 1600);
+
+  const set = dev.sent.find(s => s.bytes[0] === 0x26);
+  // [0]=cmd [1]=0 [2]=stage [3]=dpi lo [4]=dpi hi
+  assert.deepEqual(set.bytes.slice(0, 5), [0x26, 0x00, 0x00, 0x40, 0x06]);
+});
+
+test("atk: 8000 Hz is code 0x81", async () => {
+  const { dev, stored } = mockAtk();
+  const state = await atk.init(dev);
+  const rate = await atk.readRate(dev, state);
+  assert.equal(rate.options.find(o => o.hz === 8000).raw, 0x81);
+
+  assert.equal(await atk.writeRate(dev, state, 0x81), 0x81);
+  assert.equal(stored.rate, 0x81);
+});
+
+test("atk: the current rate is read from GetConfigData, not a nonexistent get-rate opcode", async () => {
+  const { dev } = mockAtk({ rate: 0x02 });                  // 500 Hz
+  const state = await atk.init(dev);
+  dev.sent.length = 0;
+
+  const rate = await atk.readRate(dev, state);
+  assert.equal(rate.value, 0x02, "current rate must be reported");
+  assert.ok(dev.sent.some(s => s.bytes[0] === 0x82), "GetConfigData was not used");
+  assert.ok(!dev.sent.some(s => s.bytes[0] === 0xa0), "0xa0 is not a real command in the vendor driver");
+});
+
+test("atk: the active DPI stage comes from the device, not a hard-coded 0", async () => {
+  const { dev, stored } = mockAtk({ stage: 3 });
+  const state = await atk.init(dev);
+  assert.equal(state.stage, 3, "init must adopt the device's active stage");
+
+  await atk.writeDpi(dev, state, 3200);
+  assert.equal(stored.dpi[3], 3200, "stage 3 must be the one written");
+  assert.equal(stored.dpi[0], 1600, "stage 0 must be left alone");
+});
+
+test("atk: a device that does not echo the probe is rejected before any write", async () => {
+  const dev = createMockDevice({ onFeatureRead: () => pad([0x00], 64) });
+  await assert.rejects(() => atk.init(dev), /did not respond|no reply|got no reply/i);
+  assert.ok(dev.sent.every(s => s.bytes[0] === 0x80), "only the read-only probe may be sent");
+});

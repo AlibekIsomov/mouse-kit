@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light">
+<!-- Defence in depth: the server sends the same policy as a header. No inline scripts or styles anywhere. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: https://resource.logitech.com https://medias-p1.phoenix.razer.com https://bpcdn.atkgear.com https://cdn.shopify.com https://www.darmoshark.cc https://www.gloriousgaming.com https://images.ctfassets.net https://media.steelseriescdn.com https://assets.corsair.com https://a.storyblok.com https://www.coolermaster.com https://dlcdnwebimgs.asus.com https://img.endgamegear.com https://cherryxtrfy.com https://image.benq.com https://img.bloody.com; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'">
+<title>MouseKit — All your mice. One control panel.</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body class="theme-light">
+<div class="wrap">
+  <!-- OpenMouse Top Header -->
+  <header class="top-header">
+    <div class="brand-logo-group">
+      <div class="logo"></div>
+      <div class="title-group">
+        <h1>MouseKit</h1>
+      </div>
+    </div>
+    
+    <nav class="nav-bar" aria-label="Main Navigation">
+      <a href="#v-brands" class="nav-link active" id="nav-brands">Brands</a>
+      <button class="nav-link demo-pill" id="nav-demo" type="button">⚡ Demo (Attack Shark R11)</button>
+      <a href="#v-suggest" class="nav-link" id="nav-suggest">Request Mouse</a>
+    </nav>
+
+    <small id="conn" class="conn-badge"></small>
+  </header>
+
+  <!-- browser does not support WebHID -->
+  <section id="v-nosupport" class="card hero hide">
+    <div class="hero-icon warn-icon">⚠️</div>
+    <h3>Chrome or Edge Required</h3>
+    <p>This page communicates with your gaming mouse directly over <b>WebHID</b>. Safari and Firefox do not currently support WebHID.</p>
+  </section>
+
+  <!-- Landing Hero Section (OpenMouse style) -->
+  <section id="v-connect" class="hero-section">
+    <div class="hero-badge">
+      <span class="dot-live green">●</span> WEBHID ENGINE
+    </div>
+    
+    <span class="hero-kicker">ONE PLACE FOR EVERY MOUSE</span>
+    
+    <h2 class="hero-title">
+      All your mice.<br>
+      One control<br>
+      panel.
+    </h2>
+
+    <p class="hero-desc">
+      MouseKit is a browser-based app for managing supported gaming mice in one place.
+      Configure DPI, report rate, and hardware settings without extra software.
+    </p>
+
+    <div class="hero-actions">
+      <button class="btn btn-primary" id="btn-connect">Connect Mouse &rarr;</button>
+      <button class="btn ghost" id="btn-demo-hero">Try Demo (Attack Shark R11) &rarr;</button>
+      <button class="link" id="btn-all">Not listed? Show all HID &darr;</button>
+    </div>
+
+    <!-- Browser Support Pills -->
+    <div class="browser-support">
+      <span class="browser-label">Browser support</span>
+      <div class="browser-pills">
+        <span class="pill ok">● Chrome <small>YOU</small></span>
+        <span class="pill ok">● Edge</span>
+        <span class="pill no">● Firefox</span>
+        <span class="pill no">● Safari</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- Brands & Models Catalogue Section -->
+  <section id="v-brands" class="card">
+    <div class="card-header">
+      <div>
+        <h2>Supported Brands</h2>
+        <p class="section-desc">Hardware detection and protocol support matrix</p>
+      </div>
+      <span class="badge-count" id="brand-count-badge">30 Brands</span>
+    </div>
+
+    <!-- Filter Tabs & Search Bar -->
+    <div class="brand-controls">
+      <div class="brand-tabs" role="tablist" aria-label="Brand filters">
+        <button class="tab-btn active" id="tab-supported" type="button">Supported (7)</button>
+        <button class="tab-btn" id="tab-all" type="button">All 30 Brands</button>
+      </div>
+      <div class="search-box">
+        <input type="search" id="brand-search" placeholder="Search brand or model..." autocomplete="off" aria-label="Search brand or model">
+      </div>
+    </div>
+
+    <div class="chips" id="brand-chips"></div>
+    <div class="chips hide" id="brand-rest"></div>
+    <!-- hidden fallback container for DOM script compatibility -->
+    <button class="hide" id="btn-more" type="button"></button>
+
+    <div class="legend">
+      <span><b class="c-ok">●</b> Verified Protocol</span>
+      <span><b class="c-warn">●</b> Beta Protocol</span>
+    </div>
+
+    <!-- Model Catalogue & Photos Grid -->
+    <div id="brand-list" class="brand-catalogue-container mt"></div>
+    <p class="note mt">Detection is based on USB Vendor ID — unlisted models still work if the brand protocol is supported.</p>
+  </section>
+
+  <!-- Connected Device Dashboard (OpenMouse Control Panel 2-Column Sidebar Layout) -->
+  <div id="v-device-panel" class="dashboard-container hide">
+    <!-- Left Sidebar -->
+    <aside class="sidebar-col">
+      <div class="sidebar-block">
+        <span class="sidebar-kicker">CONNECTED DEVICE</span>
+        <div class="sidebar-dev-card" id="sidebar-dev-card">
+          <span class="dev-dot green">●</span>
+          <div>
+            <div class="sidebar-dev-title" id="sidebar-dev-title">Attack Shark R11</div>
+            <div class="sidebar-dev-sub" id="sidebar-dev-sub">Attack Shark · Connected</div>
+          </div>
+        </div>
+      </div>
+
+      <nav class="sidebar-menu">
+        <button class="menu-item active" type="button" data-section="overview">Overview</button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <button class="link-btn" id="btn-back-home">&larr; Back to main view</button>
+      </div>
+    </aside>
+
+    <!-- Main Content Column -->
+    <main class="main-col">
+      <!-- Demo Mode Banner -->
+      <div id="demo-banner" class="demo-banner hide">
+        <span class="badge-demo">CONCEPT PREVIEW</span>
+        <span>This demo does not connect to or change a real device.</span>
+      </div>
+
+      <!-- Device Header -->
+      <section id="v-device" class="dash-hero-header">
+        <div>
+          <span class="kicker-brand" id="dev-brand-tag">ATTACK SHARK</span>
+          <h2 class="dev-title" id="dev-name-title">Attack Shark R11</h2>
+        </div>
+        <span class="status-pill ok">● Connected</span>
+      </section>
+
+      <!-- Top Grid: Mouse Circle Frame + Specs Card Stack -->
+      <div class="top-spec-grid">
+        <!-- Hero Circle Photo Container -->
+        <div class="card photo-card">
+          <div class="dark-circle-hero" id="dev-shot"></div>
+          <span class="photo-model-name" id="dev-model-sub">ATTACK SHARK R11</span>
+        </div>
+
+        <!-- Specs Stack -->
+        <div class="card specs-card">
+          <div class="spec-box">
+            <div class="spec-header">
+              <span class="spec-label">BATTERY</span>
+              <span class="spec-value" id="spec-battery-val">92%</span>
+            </div>
+            <div class="progress-bar-bg">
+              <div class="progress-bar-fill" id="spec-battery-fill" style="width: 92%;"></div>
+            </div>
+          </div>
+
+          <div class="spec-box">
+            <span class="spec-label">FIRMWARE</span>
+            <div class="spec-main-text" id="spec-fw-val">1.2.4</div>
+            <span class="spec-sub-text">Up to date</span>
+          </div>
+
+          <div class="spec-box">
+            <span class="spec-label">CONNECTION</span>
+            <div class="spec-main-text" id="spec-conn-val">Wireless</div>
+            <span class="spec-sub-text">2.4 GHz receiver</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Bottom Grid: DPI (Left) + Polling Rate & Safety (Right) -->
+      <div class="bottom-controls-grid">
+        <!-- DPI Sensitivity Card (Left) -->
+        <section id="v-dpi" class="card control-card">
+          <div class="card-header-simple">
+            <div>
+              <span class="card-kicker">DPI</span>
+              <h3>Sensitivity</h3>
+            </div>
+            <span class="badge-readout"><span id="dpi-val">1600</span> DPI</span>
+          </div>
+
+          <div class="slider-wrapper">
+            <input type="range" id="dpi-range" min="100" max="3200" step="100" value="1600" aria-label="DPI Slider">
+            <div class="minmax"><span id="dpi-min">100</span><span id="dpi-max">3200</span></div>
+          </div>
+
+          <div class="preset-label">DPI PRESETS</div>
+          <div class="dpi-presets" id="dpi-presets-group">
+            <button type="button" class="preset-btn" data-dpi="400">400</button>
+            <button type="button" class="preset-btn" data-dpi="800">800</button>
+            <button type="button" class="preset-btn active" data-dpi="1600">1600</button>
+            <button type="button" class="preset-btn" data-dpi="3200">3200</button>
+          </div>
+          <p class="note warn hide" id="dpi-warn"></p>
+        </section>
+
+        <!-- Right Stack: Polling Rate & Safety -->
+        <div class="right-stack">
+          <!-- Polling Rate Card -->
+          <section id="v-rate" class="card control-card">
+            <div class="card-header-simple">
+              <div>
+                <span class="card-kicker">POLLING RATE</span>
+                <h3>Report frequency</h3>
+              </div>
+            </div>
+            <div class="seg" id="rate-seg"></div>
+            <p class="note sm-note" id="rate-note">Higher rates can use more battery.</p>
+          </section>
+
+          <!-- Safety & Backup Card -->
+          <section id="v-safety" class="card control-card">
+            <div class="card-header-simple">
+              <div>
+                <span class="card-kicker">HARDWARE PROTECTION</span>
+                <h3>Safety & Backup</h3>
+              </div>
+            </div>
+            <p class="note warn hide" id="safety-why"></p>
+            <label class="switch hide" id="safety-consent">
+              <input type="checkbox" id="safety-enable">
+              <span>Allow writing settings to device</span>
+            </label>
+            <p class="note" id="safety-state">Verified protocol — settings apply live.</p>
+            <div class="actions-row mt">
+              <button class="btn ghost small" id="btn-backup">Download Backup</button>
+              <button class="btn ghost small hide" id="btn-restore">Restore Original</button>
+            </div>
+          </section>
+        </div>
+      </div>
+
+      <!-- Action buttons -->
+      <div class="mt">
+        <button class="btn ghost small" id="btn-other">Pick another device</button>
+      </div>
+
+      <!-- Unsupported Device Card -->
+      <section id="v-soon" class="card soon hide mt">
+        <div class="badge">NOT SUPPORTED YET</div>
+        <h3 id="soon-brand"></h3>
+        <p id="soon-why"></p>
+        <p class="sm" id="soon-msg"></p>
+        <details>
+          <summary>Technical details & HID descriptors</summary>
+          <pre id="soon-diag"></pre>
+        </details>
+        <button class="btn ghost small" id="btn-other2">Try another device</button>
+      </section>
+
+      <!-- hidden fallback container for DOM script compatibility -->
+      <div id="dev-rows" class="hide"></div>
+    </main>
+  </div>
+
+  <!-- Request Mouse Model (opens via nav) -->
+  <section id="v-suggest" class="card hide">
+    <div class="card-header">
+      <div>
+        <h2>Missing Your Mouse?</h2>
+        <p class="note">Submit a request to add protocol support for your model.</p>
+      </div>
+    </div>
+    <div class="form">
+      <div class="row2">
+        <input id="sg-brand" placeholder="Brand — e.g. Pulsar" maxlength="60" autocomplete="off" aria-label="Brand">
+        <input id="sg-model" placeholder="Model — e.g. X2V2" maxlength="60" autocomplete="off" aria-label="Model">
+      </div>
+      <input id="sg-link" placeholder="Product page or photo link (optional)" maxlength="300" autocomplete="off" aria-label="Product Link">
+      <input id="sg-contact" placeholder="Telegram or e-mail for updates (optional)" maxlength="120" autocomplete="off" aria-label="Contact">
+      <!-- honeypot: invisible to people, irresistible to bots -->
+      <input id="sg-website" class="hp" tabindex="-1" autocomplete="off" aria-hidden="true">
+      <button class="btn btn-primary" id="btn-suggest">Send Request</button>
+    </div>
+    <p class="note" id="sg-state"></p>
+  </section>
+
+  <footer>
+    WebHID Technology · Settings process locally in your browser without telemetry.
+  </footer>
+</div>
+
+<div class="toast" id="toast"></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>
