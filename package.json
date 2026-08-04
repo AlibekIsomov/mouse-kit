@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Configure mouse DPI and report rate from the browser (WebHID)",
+  "license": "MIT",
   "scripts": {
     "start": "node server.js",
     "test": "node public/selftest.js && node --test test/*.test.js"
