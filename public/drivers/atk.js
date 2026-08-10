@@ -19,10 +19,22 @@
  *   [8] battery level [9] link status
  *
  * DPI is a plain 16-bit value — no sensor lookup table needed, unlike Attack Shark.
+ *
+ * Transport: wired mice expose the packet as feature report 8. The Nearlink dongle
+ * (seen on "Nearlink Mouse Dongle" VID 0x373b PID 0x10c9, ATK A9 SE) has no feature
+ * report 8 — the same packets flow as input/output reports with ID 8 on the 0xff02
+ * collection. The transport is picked from the report IDs the interface declares.
  */
 
 const REPORT_ID = 8;
 const PACKET_SIZE = 64;
+
+const declares = (dev, kind) =>
+  dev.collections.some(c => (c[kind] ?? []).some(r => r.reportId === REPORT_ID));
+
+/** Feature report 8 when the interface has one (or declares nothing, as older
+ *  Chrome builds do) — otherwise the Nearlink output-report channel. */
+const usesOutputTransport = dev => declares(dev, "outputReports") && !declares(dev, "featureReports");
 
 const CMD = {
   GET_FIRMWARE: 0x80,
@@ -43,6 +55,21 @@ async function command(dev, cmd, fill) {
   const p = new Uint8Array(PACKET_SIZE);
   p[0] = cmd;
   if (fill) fill(p);
+
+  if (usesOutputTransport(dev)) {
+    return new Promise((resolve, reject) => {
+      const finish = (fn, arg) => { clearTimeout(timer); dev.removeEventListener("inputreport", onReport); fn(arg); };
+      const timer = setTimeout(() => finish(reject, new Error("no reply (timeout)")), 1000);
+      const onReport = e => {
+        if (e.reportId !== REPORT_ID) return;             // id 19 carries something else
+        const b = new Uint8Array(e.data.buffer);
+        if (b[0] !== cmd) return;                         // reply to a different command
+        finish(resolve, b);
+      };
+      dev.addEventListener("inputreport", onReport);
+      dev.sendReport(REPORT_ID, p).catch(err => finish(reject, err));
+    });
+  }
 
   await dev.sendFeatureReport(REPORT_ID, p);
   await sleep(25);

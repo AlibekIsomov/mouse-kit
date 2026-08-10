@@ -54,7 +54,8 @@ export const BRANDS = [
   },
   {
     name: "HyperX", vids: [0x0951, 0x03f0], status: "beta",
-    note: "NGenuity protocol, Pulsefire Dart and newer — the older generation (Surge, FPS Pro, Core) is detected only",
+    note: "Dart-era and Haste 2 / Saga-era NGenuity protocols — the Haste 2 family cannot be read, " +
+      "so defaults are shown until you write. Oldest generation (Surge, FPS Pro, Core) is detected only",
     models: ["Pulsefire Haste", "Pulsefire Haste 2", "Pulsefire Dart", "Pulsefire Saga Pro"],
   },
 

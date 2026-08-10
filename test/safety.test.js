@@ -17,7 +17,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mockLogitech, mockRazer, mockAttackShark, mockAtk, mockHyperX, DPI_FEATURE, RATE_FEATURE } from "./mocks.js";
+import { mockLogitech, mockRazer, mockAttackShark, mockAtk, mockAtkNearlink, mockHyperX, mockHyperXGen2, DPI_FEATURE, RATE_FEATURE } from "./mocks.js";
 import { logitech } from "../public/drivers/logitech.js";
 import { razer } from "../public/drivers/razer.js";
 import { attackShark } from "../public/drivers/attackshark.js";
@@ -125,13 +125,29 @@ test("hyperx: only the five documented config commands — never LED, buttons or
     assert.ok(!used.has(cmd), `hyperx sent 0x${cmd.toString(16)} — that touches settings the user never asked about`);
 });
 
+test("hyperx gen2: only battery, config and commit reports — never RGB, brightness or the 0xf0 family", async () => {
+  const { dev } = mockHyperXGen2();
+  await exercise(hyperx, dev);
+
+  const used = new Set(dev.sent.map(s => s.reportId));
+  const allowed = new Set([0x50, 0x32, 0x36]);
+  for (const id of used) assert.ok(allowed.has(id), `unexpected hyperx gen2 report 0x${id.toString(16)}`);
+
+  // 0x44 RGB and 0x40 brightness touch settings the user never asked about;
+  // 0xf0/0xfa/0xfc are undocumented and sit where firmware channels usually live.
+  for (const id of [0x44, 0x40, 0xf0, 0xfa, 0xfc])
+    assert.ok(!used.has(id), `hyperx gen2 wrote report 0x${id.toString(16)}`);
+});
+
 test("no driver ever emits a firmware/bootloader opcode", async () => {
   const runs = [
     ["logitech", logitech, mockLogitech().dev],
     ["razer", razer, mockRazer().dev],
     ["attack shark", attackShark, mockAttackShark().dev],
     ["atk", atk, mockAtk().dev],
+    ["atk nearlink", atk, mockAtkNearlink().dev],
     ["hyperx", hyperx, mockHyperX().dev],
+    ["hyperx gen2", hyperx, mockHyperXGen2().dev],
   ];
 
   for (const [name, driver, dev] of runs) {

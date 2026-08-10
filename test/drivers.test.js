@@ -12,7 +12,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createMockDevice, pad } from "./mock-hid.js";
-import { mockRazer, mockAttackShark, mockAtk, mockHyperX } from "./mocks.js";
+import { mockRazer, mockAttackShark, mockAtk, mockAtkNearlink, mockHyperX, mockHyperXGen2 } from "./mocks.js";
 import { razer } from "../public/drivers/razer.js";
 import { attackShark, DPI_TEMPLATE, checksum, dpiToBytes, bytesToDpi } from "../public/drivers/attackshark.js";
 import { atk } from "../public/drivers/atk.js";
@@ -221,6 +221,45 @@ test("hyperx: a silent device is rejected before any write", async () => {
   assert.ok(dev.sent.every(s => s.bytes[0] === 0x53), "only the read-only probe may be sent");
 });
 
+test("hyperx gen2: the Haste 2 report map selects the 0xff90 protocol and probes with the battery query", async () => {
+  const { dev } = mockHyperXGen2({ battery: 0x63 });
+  const state = await hyperx.init(dev);
+  assert.equal(state.gen, 2);
+  assert.equal(state.battery, 0x63, "battery must come from the 0x51 reply");
+  assert.equal(state.needsConfirm, true, "settings cannot be read — the user must confirm the first write");
+  assert.deepEqual(dev.sent.map(s => s.reportId), [0x50], "only the read-only battery query may be sent");
+});
+
+test("hyperx gen2: writeDpi sends the documented 0x32 packet and the commit sequence", async () => {
+  const { dev, stored } = mockHyperXGen2();
+  const state = await hyperx.init(dev);
+  dev.sent.length = 0;
+
+  assert.equal(await hyperx.writeDpi(dev, state, 1600), 1600);
+
+  const config = stored.configs.at(-1);
+  // [0]=0x01 [1]=save [2]=0 [3]=rate code [4]=stage mask [5]=active stage
+  assert.deepEqual(Array.from(config.slice(0, 6)), [0x01, 0x01, 0x00, 0x08, 0x0f, 0x01]);
+  // protocol-notes.md samples: 400→0x07, 1600→0x1f, 3200→0x3f (dpi/50 − 1, little-endian)
+  assert.deepEqual(Array.from(config.slice(6, 8)), [0x07, 0x00], "stage 0 stays 400");
+  assert.deepEqual(Array.from(config.slice(11, 13)), [0x1f, 0x00], "active stage 1 becomes 1600");
+  assert.deepEqual(Array.from(config.slice(21, 23)), [0x3f, 0x00], "stage 3 stays 3200");
+  assert.equal(stored.commits, 1, "the 0x36 commit must follow");
+
+  const ids = new Set(dev.sent.map(s => s.reportId));
+  assert.deepEqual([...ids].sort((a, b) => a - b), [0x32, 0x36, 0x50], "only config, commit and its 0x50 prefix");
+});
+
+test("hyperx gen2: report rate codes are 8000/Hz and travel in the same config packet", async () => {
+  const { dev, stored } = mockHyperXGen2();
+  const state = await hyperx.init(dev);
+  const rate = await hyperx.readRate(dev, state);
+  assert.deepEqual(rate.options.map(o => [o.hz, o.raw]), [[125, 0x40], [250, 0x20], [500, 0x10], [1000, 0x08]]);
+
+  assert.equal(await hyperx.writeRate(dev, state, 0x40), 0x40);
+  assert.equal(stored.configs.at(-1)[3], 0x40, "rate code sits at payload byte [3]");
+});
+
 /* ============================= ATK ============================= */
 
 test("atk: packets are 64 bytes on feature report 8", async () => {
@@ -274,6 +313,21 @@ test("atk: the active DPI stage comes from the device, not a hard-coded 0", asyn
   await atk.writeDpi(dev, state, 3200);
   assert.equal(stored.dpi[3], 3200, "stage 3 must be the one written");
   assert.equal(stored.dpi[0], 1600, "stage 0 must be left alone");
+});
+
+test("atk: the Nearlink dongle is driven over output report 8, not a feature report", async () => {
+  const { dev, stored } = mockAtkNearlink({ stage: 2 });
+  const state = await atk.init(dev);
+  assert.equal(state.stage, 2, "config must be readable over the output transport");
+
+  assert.equal(await atk.writeDpi(dev, state, 3200), 3200);
+  assert.equal(stored.dpi[2], 3200);
+
+  for (const packet of dev.sent) {
+    assert.equal(packet.kind, "output", "the dongle has no feature report 8 — sendFeatureReport would throw");
+    assert.equal(packet.reportId, 8);
+    assert.equal(packet.bytes.length, 64);
+  }
 });
 
 test("atk: a device that does not echo the probe is rejected before any write", async () => {

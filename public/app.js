@@ -76,8 +76,8 @@ async function connect(showAll) {
   log("driver found for", VENDORS[device.vendorId]);
 
   state = null;
-  let lastError = null;
-  for (const candidate of candidates) {
+  let firstError = null;                 // vendor interfaces are probed first, so the
+  for (const candidate of candidates) {  // first error is the informative one to report
     try {
       await candidate.open();
       log("probing interface:", hidDetail(candidate));
@@ -86,12 +86,12 @@ async function connect(showAll) {
       log("init ok:", state);
       break;
     } catch (e) {
-      lastError = e;
+      firstError ??= e;
       log("interface failed:", e.message);
       if (candidate.opened) await candidate.close().catch(() => {});
     }
   }
-  if (!state) return unsupported(lastError?.message ?? "No interface answered.");
+  if (!state) return unsupported(firstError?.message ?? "No interface answered.");
   if (state.warning) toast(state.warning, true);
 
   await loadDpi();

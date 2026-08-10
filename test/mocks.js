@@ -126,25 +126,78 @@ export function mockHyperX({ dpiSteps = [8, 16, 32, 64, 128], profile = 1, rate 
   return { dev, stored };
 }
 
-/** ATK / VXE: 64-byte packets on feature report 8, [0] = command. */
+/**
+ * HyperX generation 2 (Pulsefire Haste 2 / Saga, usage page 0xff90): numbered
+ * reports, even ID = request, ID+1 = response. Only the battery is readable.
+ * Collections mirror the HID map captured from a real Haste 2 (0x03f0:0x0b97).
+ */
+export function mockHyperXGen2({ battery = 0x63 } = {}) {
+  const stored = { configs: [], commits: 0 };
+  const dev = createMockDevice({
+    vendorId: 0x03f0, productId: 0x0b97,
+    collections: [{
+      usagePage: 0xff90, usage: 0xff00,
+      inputReports: [0x11, 0x33, 0x51, 0xfb].map(reportId => ({ reportId })),
+      outputReports: [0x10, 0x32, 0x36, 0x40, 0x44, 0x50, 0xf0, 0xfa, 0xfc].map(reportId => ({ reportId })),
+      featureReports: [0x10, 0x32, 0x36, 0x40, 0x44, 0x50].map(reportId => ({ reportId })),
+    }],
+    onOutput({ reportId, bytes }) {
+      if (reportId === 0x50 && bytes[0] === 0x02)
+        return { reportId: 0x51, bytes: pad([0x02, battery, 0x01, 0x1e, 0x00, 0xd0, 0x0f], 63) };
+      if (reportId === 0x32) stored.configs.push(bytes);
+      if (reportId === 0x36) stored.commits++;
+      return null;
+    },
+  });
+  return { dev, stored };
+}
+
+/** The ATK protocol brain, shared by both transports. */
+function atkReply(stored, bytes) {
+  const cmd = bytes[0];
+  if (cmd === 0x80) return pad([0x80, 1, 2], 64);
+  // GetConfigData: [1] report rate, [2] active DPI stage
+  if (cmd === 0x82) return pad([0x82, stored.rate, stored.stage], 64);
+  if (cmd === 0xa6) return pad([0xa6, ...stored.dpi.flatMap(d => [d & 0xff, d >> 8])], 64);
+  if (cmd === 0x26) {
+    stored.dpi[bytes[2]] = bytes[3] | (bytes[4] << 8);
+    return pad([0x26], 64);
+  }
+  if (cmd === 0x20) { stored.rate = bytes[3]; return pad([0x20], 64); }
+  return null;
+}
+
+/** ATK / VXE wired: 64-byte packets on feature report 8, [0] = command. */
 export function mockAtk({ dpi = 1600, rate = 0x01, stage = 0 } = {}) {
   const stored = { dpi: [dpi, 0, 0, 0, 0, 0, 0, 0], rate, stage };
   const dev = createMockDevice({
     vendorId: 0x373b,
     onFeatureRead(reportId, sent) {
       const last = sent.filter(s => s.reportId === reportId).at(-1);
-      if (!last) return null;
-      const cmd = last.bytes[0];
-      if (cmd === 0x80) return pad([0x80, 1, 2], 64);
-      // GetConfigData: [1] report rate, [2] active DPI stage
-      if (cmd === 0x82) return pad([0x82, stored.rate, stored.stage], 64);
-      if (cmd === 0xa6) return pad([0xa6, ...stored.dpi.flatMap(d => [d & 0xff, d >> 8])], 64);
-      if (cmd === 0x26) {
-        stored.dpi[last.bytes[2]] = last.bytes[3] | (last.bytes[4] << 8);
-        return pad([0x26], 64);
-      }
-      if (cmd === 0x20) { stored.rate = last.bytes[3]; return pad([0x20], 64); }
-      return null;
+      return last ? atkReply(stored, last.bytes) : null;
+    },
+  });
+  return { dev, stored };
+}
+
+/**
+ * ATK Nearlink dongle (VID 0x373b PID 0x10c9, e.g. A9 SE): same packets, but report 8
+ * is an input/output pair — there is no feature report 8. Collections mirror the HID
+ * map captured from the real dongle.
+ */
+export function mockAtkNearlink({ dpi = 1600, rate = 0x01, stage = 0 } = {}) {
+  const stored = { dpi: [dpi, 0, 0, 0, 0, 0, 0, 0], rate, stage };
+  const dev = createMockDevice({
+    vendorId: 0x373b, productId: 0x10c9,
+    collections: [
+      { usagePage: 0xff02, usage: 0x02, inputReports: [{ reportId: 19 }], outputReports: [{ reportId: 19 }] },
+      { usagePage: 0xff02, usage: 0x02, inputReports: [{ reportId: 8 }], outputReports: [{ reportId: 8 }] },
+      { usagePage: 0xff04, usage: 0x02, featureReports: [{ reportId: 6 }] },
+    ],
+    onOutput({ reportId, bytes }) {
+      if (reportId !== 8) return null;
+      const reply = atkReply(stored, bytes);
+      return reply && { reportId: 8, bytes: reply };
     },
   });
   return { dev, stored };
