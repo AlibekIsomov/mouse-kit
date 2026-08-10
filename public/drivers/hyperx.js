@@ -51,8 +51,15 @@ export const HYPERX_RATES = [125, 250, 500, 1000].map((hz, i) => ({ raw: i, hz }
  * shown, the user confirms before the first write, and writes return what was sent.
  */
 
+/**
+ * code = 8000 / Hz. 125..4000 are documented in hyperx-saga-control; 8000 = 0x01
+ * follows the same formula and matches the Haste 2's advertised 8K mode (which may
+ * need a firmware update through NGENUITY on older units). Recovery from a rate the
+ * firmware cannot do is one click — the write is independent of the current state.
+ */
 export const GEN2_RATES = [
   { raw: 0x40, hz: 125 }, { raw: 0x20, hz: 250 }, { raw: 0x10, hz: 500 }, { raw: 0x08, hz: 1000 },
+  { raw: 0x04, hz: 2000 }, { raw: 0x02, hz: 4000 }, { raw: 0x01, hz: 8000 },
 ];
 export const dpiToCode = dpi => Math.round(dpi / 50) - 1;
 
@@ -207,6 +214,8 @@ export const hyperx = {
   },
 
   rateNote: s => (s.gen === 2
-    ? "This model does not report its settings — shown values are what was last written here."
+    ? "This model does not report its settings — shown values are what was last written here. " +
+      "2000–8000 Hz need up-to-date firmware (NGENUITY update); if tracking misbehaves after " +
+      "picking one, click 1000 Hz to recover."
     : ""),
 };

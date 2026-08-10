@@ -6,7 +6,7 @@ import { BRANDS, buildVidMap } from "./devices.js";
 import { parseDpiList, ratesFrom8060, ratesFrom8061 } from "./drivers/logitech.js";
 import { RAZER_HZ } from "./drivers/razer.js";
 import { DPI_TEMPLATE, checksum, dpiToBytes, bytesToDpi, RATES as AS_RATES } from "./drivers/attackshark.js";
-import { RATES as ATK_RATES, EE_RATES, eeDpiEncode, eeDpiDecode, eePacket } from "./drivers/atk.js";
+import { RATES as ATK_RATES, EE_RATES, EE_MAX_HZ, eeDpiEncode, eeDpiDecode, eePacket } from "./drivers/atk.js";
 import { HYPERX_RATES, GEN2_RATES, dpiStepFor, dpiToCode } from "./drivers/hyperx.js";
 
 let failed = 0;
@@ -48,6 +48,7 @@ eq(eeDpiEncode(1600), [31, 31, 8, 0x0f], "ee dpi encode 1600");
   eq(eeDpiDecode(eeDpiEncode(dpi)[0], eeDpiEncode(dpi)[2]), dpi, `ee dpi round-trip ${dpi}`));
 eq(Array.from(eePacket(0x08, 0, 6)).at(-1), 0x3f, "ee packet checksum");
 eq(EE_RATES.find(r => r.hz === 8000).raw, 0x40, "ee 8000 Hz code");
+eq([0, 1, 2, 3, 4, 5].map(t => EE_MAX_HZ[t]), [1000, 4000, 1000, 8000, 2000, 8000], "ee connection ceilings");
 
 /* --- HyperX --- */
 eq(HYPERX_RATES.map(r => [r.raw, r.hz]), [[0, 125], [1, 250], [2, 500], [3, 1000]], "hyperx rate table");

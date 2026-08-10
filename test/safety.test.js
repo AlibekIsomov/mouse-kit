@@ -117,11 +117,12 @@ test("atk nearlink: only version/get/set commands, and SetEEPROM only at rate an
 
   const used = new Set(dev.sent.map(s => s.bytes[0]));
   for (const cmd of used)
-    assert.ok([0x12, 0x08, 0x07].includes(cmd), `unexpected EEPROM command 0x${cmd.toString(16)}`);
+    assert.ok([0x01, 0x12, 0x08, 0x07].includes(cmd),   // handshake, version, get, set
+      `unexpected EEPROM command 0x${cmd.toString(16)}`);
 
-  // 0x01 DownLoadData, 0x0d EnterUSBUpgradeMode, 0x09 RestoreFactory, 0x05 dongle
-  // re-pairing — all present in the vendor protocol, none may ever leave this app.
-  for (const cmd of [0x01, 0x0d, 0x09, 0x05])
+  // 0x0d EnterUSBUpgradeMode, 0x09 RestoreFactory, 0x05 dongle re-pairing — all
+  // present in the vendor protocol, none may ever leave this app.
+  for (const cmd of [0x0d, 0x09, 0x05])
     assert.ok(!used.has(cmd), `destructive EEPROM command 0x${cmd.toString(16)} was sent`);
 
   // Writes must stay inside the documented rate/DPI area — a stray address would

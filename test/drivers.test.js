@@ -365,17 +365,55 @@ test("atk nearlink: writeDpi rewrites only the active preset's 4-byte slot", asy
   assert.deepEqual([...eeprom.slice(0x14, 0x14 + 4)], eeDpiEncode(1600), "sibling slot untouched");
 });
 
-test("atk nearlink: report rate uses the V HUB codes and keeps the other info bytes", async () => {
+test("atk nearlink: report rate keeps the other info bytes, and risky rates are not offered", async () => {
   const { dev, eeprom } = mockAtkNearlink({ rate: 0x01, active: 2 });
   const state = await atk.init(dev);
 
   const rate = await atk.readRate(dev, state);
   assert.equal(rate.value, 0x01);
-  assert.equal(rate.options.find(o => o.hz === 8000).raw, 0x40, "8000 Hz is 0x40 on this platform");
+  // The EEPROM accepts any code blindly — a 2000/4000/8000 write without the 8K
+  // dongle breaks tracking (field report from an A9 SE), so they must not appear.
+  assert.deepEqual(rate.options.map(o => o.hz), [1000, 500, 250, 125], "only universally safe rates");
 
   assert.equal(await atk.writeRate(dev, state, 0x08), 0x08);      // 125 Hz
   assert.deepEqual([...eeprom.slice(0, 6)], [0x08, 0x4d, 8, 0x4d, 2, 0x53],
     "value+complement pairs, profile count and active profile preserved");
+});
+
+test("atk nearlink: the 4K dongle unlocks 2000/4000 but keeps 8000 hidden", async () => {
+  const { dev } = mockAtkNearlink({ connType: 1 });               // Dongle4K
+  const state = await atk.init(dev);
+  assert.equal(state.maxHz, 4000, "ceiling comes from the DownLoadData handshake");
+
+  const rate = await atk.readRate(dev, state);
+  assert.deepEqual(rate.options.map(o => o.hz), [4000, 2000, 1000, 500, 250, 125]);
+});
+
+test("atk nearlink: an 8K dongle offers the full ladder, a silent handshake stays at 1000", async () => {
+  const eightK = mockAtkNearlink({ connType: 5 });                // Dongle8K
+  const s8 = await atk.init(eightK.dev);
+  assert.equal((await atk.readRate(eightK.dev, s8)).options[0].hz, 8000);
+
+  // A device that never answers the handshake must fall back to the safe ceiling.
+  const shy = mockAtkNearlink();
+  const origOnOutput = shy.dev.sendReport;                        // mock replies via sendReport
+  shy.dev.sendReport = async (id, data) =>
+    data[0] === 0x01 ? undefined : origOnOutput.call(shy.dev, id, data);
+  const sShy = await atk.init(shy.dev);
+  assert.equal(sShy.maxHz, 1000, "no handshake answer → 1000 Hz ceiling");
+});
+
+test("atk nearlink: a mouse stuck at 8000 Hz still shows it and can climb back down", async () => {
+  const { dev, eeprom } = mockAtkNearlink({ rate: 0x40 });        // 8K code already in EEPROM
+  const state = await atk.init(dev);
+
+  const rate = await atk.readRate(dev, state);
+  assert.equal(rate.value, 0x40, "the stuck value must be visible");
+  assert.equal(rate.options[0].hz, 8000, "current state is shown so the UI can mark it");
+  assert.deepEqual(rate.options.slice(1).map(o => o.hz), [1000, 500, 250, 125]);
+
+  assert.equal(await atk.writeRate(dev, state, 0x01), 0x01, "recovery write to 1000 Hz");
+  assert.equal(eeprom[0], 0x01);
 });
 
 test("atk: a device that does not echo the probe is rejected before any write", async () => {

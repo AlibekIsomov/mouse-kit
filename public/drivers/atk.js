@@ -82,8 +82,16 @@ async function readConfig(dev) {
 
 /* ------------------------------- EEPROM platform ------------------------------- */
 
-const EE = { GET_VERSION: 0x12, GET: 0x08, SET: 0x07 };
+const EE = { HANDSHAKE: 0x01, GET_VERSION: 0x12, GET: 0x08, SET: 0x07 };
 const EE_ADDR = { INFO: 0x0000, DPI_PAIRS: [0x0c, 0x14, 0x1c, 0x24] };
+
+/**
+ * DownLoadData (0x01) is a read-only handshake: data [4]=CID, [5]=MID,
+ * [6]=connection type. The type names the attached dongle/cable, which is the
+ * real report-rate ceiling (atk-hub-rs ConnectionType):
+ *   0 Dongle1K  1 Dongle4K  2 Wired1K  3 Wired8K  4 Dongle2K  5 Dongle8K
+ */
+export const EE_MAX_HZ = { 0: 1000, 1: 4000, 2: 1000, 3: 8000, 4: 2000, 5: 8000 };
 
 export const EE_RATES = [
   { raw: 0x40, hz: 8000 }, { raw: 0x20, hz: 4000 }, { raw: 0x10, hz: 2000 },
@@ -149,16 +157,23 @@ const eeDriver = {
     return (await this.readDpi(dev)).value;
   },
 
-  async readRate(dev) {
+  async readRate(dev, s) {
     const { rate } = await eeInfo(dev);
-    return { options: EE_RATES, value: rate };
+    // The EEPROM stores whatever it is told — the mouse never validates it, and a
+    // 2000+ Hz code without the matching dongle degrades tracking badly (seen in
+    // the field on an A9 SE). Offer only what the connection reports it can carry;
+    // if the device is currently above that, show it so the user can climb back down.
+    const options = EE_RATES.filter(o => o.hz <= (s.maxHz ?? 1000));
+    const current = EE_RATES.find(o => o.raw === rate);
+    if (current && !options.includes(current)) options.unshift(current);
+    return { options, value: rate };
   },
 
   async writeRate(dev, s, raw) {
     const { count, active } = await eeInfo(dev);        // preserve the other info bytes
     const pack = v => [v & 0xff, (0x55 - v) & 0xff];
     await eeCommand(dev, EE.SET, EE_ADDR.INFO, 6, [...pack(raw), ...pack(count), ...pack(active)]);
-    return (await this.readRate(dev)).value;
+    return (await this.readRate(dev, s)).value;
   },
 };
 
@@ -174,7 +189,12 @@ export const atk = {
       const v = await eeCommand(dev, EE.GET_VERSION).catch(() => null);
       if (!v)
         throw new Error("The ATK protocol got no reply — if the mouse is asleep, move it and reconnect.");
-      return { proto: "ee", firmware: v[5] + "." + v[6] };
+      const dl = await eeCommand(dev, EE.HANDSHAKE, 0, 8).catch(() => null);
+      return {
+        proto: "ee",
+        firmware: v[5] + "." + v[6],
+        maxHz: EE_MAX_HZ[dl?.[11]] ?? 1000,     // connection type sits at data[6] = byte [11]
+      };
     }
 
     const r = await command(dev, CMD.GET_FIRMWARE).catch(() => null);
@@ -205,7 +225,7 @@ export const atk = {
   },
 
   async readRate(dev, s) {
-    if (s.proto === "ee") return eeDriver.readRate(dev);
+    if (s.proto === "ee") return eeDriver.readRate(dev, s);
     const config = await readConfig(dev);
     if (config) s.stage = config.stage;               // the DPI button may have moved it
     return { options: RATES, value: config?.rate ?? 0 };
@@ -216,4 +236,9 @@ export const atk = {
     await command(dev, CMD.SET_RATE, p => { p[3] = raw; });
     return (await this.readRate(dev, s)).value || raw;   // if reads are unsupported, show what we wrote
   },
+
+  rateNote: s => (s.proto === "ee" && s.maxHz < 8000
+    ? `This connection reports a ${s.maxHz} Hz ceiling — higher rates are hidden because the ` +
+      `mouse would accept them blindly and stop tracking properly.`
+    : ""),
 };

@@ -187,7 +187,7 @@ export function mockAtk({ dpi = 1600, rate = 0x01, stage = 0 } = {}) {
  * mirror the HID map captured from the real dongle. The mock is a real EEPROM: reads
  * and writes hit the same byte array, so round-trips are genuine.
  */
-export function mockAtkNearlink({ dpi = 1600, rate = 0x01, active = 0 } = {}) {
+export function mockAtkNearlink({ dpi = 1600, rate = 0x01, active = 0, connType = 0 } = {}) {
   const eeprom = new Uint8Array(0x100);
   const packByte = (addr, v) => { eeprom[addr] = v; eeprom[addr + 1] = (0x55 - v) & 0xff; };
   packByte(0x0, rate); packByte(0x2, 8); packByte(0x4, active);
@@ -206,6 +206,7 @@ export function mockAtkNearlink({ dpi = 1600, rate = 0x01, active = 0 } = {}) {
       const addr = (aHi << 8) | aLo;
       const reply = data => ({ reportId: 8, bytes: pad([cmd, 0, aHi, aLo, len, ...data], 16) });
       if (cmd === 0x12) return reply([3, 1]);                                   // GetMouseVersion
+      if (cmd === 0x01) return reply([0, 0, 0, 0, 0x11, 0x22, connType, 0]);    // DownLoadData handshake
       if (cmd === 0x08) return reply([...eeprom.slice(addr, addr + len)]);      // GetEEPROM
       if (cmd === 0x07) {                                                       // SetEEPROM
         eeprom.set(bytes.slice(5, 5 + len), addr);
