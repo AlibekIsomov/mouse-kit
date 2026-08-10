@@ -17,11 +17,12 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mockLogitech, mockRazer, mockAttackShark, mockAtk, DPI_FEATURE, RATE_FEATURE } from "./mocks.js";
+import { mockLogitech, mockRazer, mockAttackShark, mockAtk, mockHyperX, DPI_FEATURE, RATE_FEATURE } from "./mocks.js";
 import { logitech } from "../public/drivers/logitech.js";
 import { razer } from "../public/drivers/razer.js";
 import { attackShark } from "../public/drivers/attackshark.js";
 import { atk } from "../public/drivers/atk.js";
+import { hyperx } from "../public/drivers/hyperx.js";
 
 /** Everything a driver does when the user changes both settings. */
 async function exercise(driver, dev) {
@@ -110,12 +111,27 @@ test("atk: only the five whitelisted commands are sent", async () => {
     assert.ok(!FORBIDDEN_ATK_COMMANDS.includes(cmd), `destructive atk command 0x${cmd.toString(16)}`);
 });
 
+test("hyperx: only the five documented config commands — never LED, buttons or macros", async () => {
+  const { dev } = mockHyperX();
+  await exercise(hyperx, dev);
+
+  const used = new Set(dev.sent.map(s => s.bytes[0]));
+  const allowed = new Set([0x50, 0x53, 0xd0, 0xd3, 0xde]);
+  for (const cmd of used) assert.ok(allowed.has(cmd), `unexpected hyperx command 0x${cmd.toString(16)}`);
+
+  // Same report carries 0xd2 LED, 0xd4 button remap and 0xd5/0xd6 macros — a wrong
+  // one of those leaves the mouse remapped or flashing, so they stay forbidden.
+  for (const cmd of [0xd2, 0xd4, 0xd5, 0xd6])
+    assert.ok(!used.has(cmd), `hyperx sent 0x${cmd.toString(16)} — that touches settings the user never asked about`);
+});
+
 test("no driver ever emits a firmware/bootloader opcode", async () => {
   const runs = [
     ["logitech", logitech, mockLogitech().dev],
     ["razer", razer, mockRazer().dev],
     ["attack shark", attackShark, mockAttackShark().dev],
     ["atk", atk, mockAtk().dev],
+    ["hyperx", hyperx, mockHyperX().dev],
   ];
 
   for (const [name, driver, dev] of runs) {
@@ -138,11 +154,13 @@ test("a device that fails its probe is never written to", async () => {
     ["logitech", logitech, createMockDevice({ onOutput: () => null })],
     ["razer", razer, createMockDevice({ onFeatureRead: () => null })],
     ["atk", atk, createMockDevice({ onFeatureRead: () => null })],
+    ["hyperx", hyperx, createMockDevice({ onOutput: () => null })],
   ];
 
   for (const [name, driver, dev] of silent) {
     await assert.rejects(() => driver.init(dev), `${name} should refuse an unresponsive device`);
-    const writes = dev.sent.filter(s => ![0x00, 0x80, 0x81].includes(s.bytes[0] ?? 0) && s.bytes[2] !== 0x1a);
+    // 0x00/0x80/0x81/0x53 are the read-only probes; 0x1a is the logitech ping address
+    const writes = dev.sent.filter(s => ![0x00, 0x80, 0x81, 0x53].includes(s.bytes[0] ?? 0) && s.bytes[2] !== 0x1a);
     assert.equal(writes.length, 0, `${name} wrote to a device that never answered`);
   }
 });

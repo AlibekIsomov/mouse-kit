@@ -99,6 +99,33 @@ export function mockAttackShark({ live = true, rate = 0x01 } = {}) {
   return { dev, block, stored };
 }
 
+/**
+ * HyperX (Dart-and-newer protocol): 64-byte output packets, a read command is
+ * answered by an input report whose first byte echoes the command.
+ * `dpiSteps` are hardware units (dpi / 50 on the default Dart PID).
+ */
+export function mockHyperX({ dpiSteps = [8, 16, 32, 64, 128], profile = 1, rate = 3, productId = 0x16e2 } = {}) {
+  const stored = { dpiSteps: [...dpiSteps], profile, rate, saves: 0 };
+  const dev = createMockDevice({
+    vendorId: 0x0951, productId,
+    onOutput({ bytes }) {
+      const cmd = bytes[0];
+      if (cmd === 0x53) return { reportId: 0, bytes: pad([0x53, 0, 0, 0, stored.profile, 0b11111], 64) };
+      if (cmd === 0x50 && bytes[1] === 0x03) {
+        const b = pad([0x50, 0x03], 64);
+        stored.dpiSteps.forEach((v, i) => { b[10 + 2 * i] = v & 0xff; b[11 + 2 * i] = v >> 8; });
+        b[63] = stored.rate;
+        return { reportId: 0, bytes: b };
+      }
+      if (cmd === 0xd3 && bytes[1] === 0x02) stored.dpiSteps[bytes[2]] = bytes[4] | (bytes[5] << 8);
+      if (cmd === 0xd0) stored.rate = bytes[4];
+      if (cmd === 0xde) stored.saves++;
+      return null;                                        // writes are not acknowledged
+    },
+  });
+  return { dev, stored };
+}
+
 /** ATK / VXE: 64-byte packets on feature report 8, [0] = command. */
 export function mockAtk({ dpi = 1600, rate = 0x01, stage = 0 } = {}) {
   const stored = { dpi: [dpi, 0, 0, 0, 0, 0, 0, 0], rate, stage };

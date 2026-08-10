@@ -175,6 +175,7 @@ async function handleReport(req, res) {
       `Brand: ${escapeHtml(d.brand || "unknown")}`,
       `VID/PID: <code>${hex4(d.vendorId)} / ${hex4(d.productId)}</code>`,
       `Collections: <code>${escapeHtml(d.collections || "—")}</code>`,
+      `HID: <code>${escapeHtml(d.hid || "—")}</code>`,
       `Reason: ${escapeHtml(d.reason || "—")}`,
       `UA: <code>${escapeHtml(d.ua || "—")}</code>`,
     ].join("\n"));

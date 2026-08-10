@@ -76,6 +76,7 @@ export function validateReport(body) {
       brand: clean(body.brand, 80),
       reason: clean(body.reason, 200),
       collections: clean(body.collections, 200),
+      hid: clean(body.hid, 800),          // full report-ID map — needed to add a driver blind
       ua: clean(body.ua, 200),
     },
   };

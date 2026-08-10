@@ -7,6 +7,7 @@ import { parseDpiList, ratesFrom8060, ratesFrom8061 } from "./drivers/logitech.j
 import { RAZER_HZ } from "./drivers/razer.js";
 import { DPI_TEMPLATE, checksum, dpiToBytes, bytesToDpi, RATES as AS_RATES } from "./drivers/attackshark.js";
 import { RATES as ATK_RATES } from "./drivers/atk.js";
+import { HYPERX_RATES, dpiStepFor } from "./drivers/hyperx.js";
 
 let failed = 0;
 const eq = (got, want, label) => {
@@ -40,6 +41,10 @@ eq(AS_RATES.map(r => 0xff - r.raw), [0xfe, 0xfd, 0xfb, 0xf7], "attack shark rate
 eq(ATK_RATES.length, 7, "atk rate count");
 eq(new Set(ATK_RATES.map(r => r.raw)).size, 7, "atk codes unique");
 eq([8000, 1000, 125].map(hz => ATK_RATES.find(r => r.hz === hz).raw), [0x81, 0x01, 0x08], "atk codes");
+
+/* --- HyperX --- */
+eq(HYPERX_RATES.map(r => [r.raw, r.hz]), [[0, 125], [1, 250], [2, 500], [3, 1000]], "hyperx rate table");
+eq([0x16e2, 0x028e, 0x048e].map(dpiStepFor), [50, 100, 100], "hyperx dpi step per pid");
 
 /* --- devices.js --- */
 eq(buildVidMap([{ name: "A", vids: [1] }, { name: "B", vids: [1, 2] }]), { 1: "A / B", 2: "B" }, "vid map merge");

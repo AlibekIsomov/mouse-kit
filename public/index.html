@@ -252,23 +252,24 @@
         <button class="btn ghost small" id="btn-other">Pick another device</button>
       </div>
 
-      <!-- Unsupported Device Card -->
-      <section id="v-soon" class="card soon hide mt">
-        <div class="badge">NOT SUPPORTED YET</div>
-        <h3 id="soon-brand"></h3>
-        <p id="soon-why"></p>
-        <p class="sm" id="soon-msg"></p>
-        <details>
-          <summary>Technical details & HID descriptors</summary>
-          <pre id="soon-diag"></pre>
-        </details>
-        <button class="btn ghost small" id="btn-other2">Try another device</button>
-      </section>
-
       <!-- hidden fallback container for DOM script compatibility -->
       <div id="dev-rows" class="hide"></div>
     </main>
   </div>
+
+  <!-- Unsupported Device Card — must stay OUTSIDE #v-device-panel: unsupported()
+       hides that panel, so a card nested inside it could never become visible -->
+  <section id="v-soon" class="card soon hide mt">
+    <div class="badge">NOT SUPPORTED YET</div>
+    <h3 id="soon-brand"></h3>
+    <p id="soon-why"></p>
+    <p class="sm" id="soon-msg"></p>
+    <details>
+      <summary>Technical details & HID descriptors</summary>
+      <pre id="soon-diag"></pre>
+    </details>
+    <button class="btn ghost small" id="btn-other2">Try another device</button>
+  </section>
 
   <!-- Request Mouse Model (opens via nav) -->
   <section id="v-suggest" class="card hide">

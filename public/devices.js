@@ -28,7 +28,7 @@ export const BRANDS = [
     name: "Attack Shark", vids: [0x1d57], status: "beta",
     note: "X11 protocol (Beken BK3630 + PAW3311). DPI may read wrong on models with a different sensor",
     models: ["X11", "X11 Pro", "X11 SE", "X1", "X3", "X3 Pro", "X3 Max", "X6",
-             "X8 SE", "X8 Plus", "X8 Pro", "R1", "R11 Ultra"],
+             "X8 SE", "X8 Plus", "X8 Pro", "R1", "R11", "R11 Ultra"],
   },
   {
     name: "ATK", vids: [0x373b], status: "beta",
@@ -51,6 +51,11 @@ export const BRANDS = [
   {
     name: "Darmoshark", vids: [0x3554], status: "beta", note: "ATK protocol is attempted",
     models: ["M3", "M3s", "M5", "N3"],
+  },
+  {
+    name: "HyperX", vids: [0x0951, 0x03f0], status: "beta",
+    note: "NGenuity protocol, Pulsefire Dart and newer — the older generation (Surge, FPS Pro, Core) is detected only",
+    models: ["Pulsefire Haste", "Pulsefire Haste 2", "Pulsefire Dart", "Pulsefire Saga Pro"],
   },
 
   // Detected only — protocol not implemented yet
@@ -77,7 +82,6 @@ export const BRANDS = [
   { name: "ROCCAT",        vids: [0x1e7d], status: "soon", models: ["Kone Pro", "Kone XP", "Burst Pro"] },
   { name: "Cooler Master", vids: [0x2516], status: "soon", models: ["MM711", "MM720", "MM712"] },
   { name: "ASUS ROG",      vids: [0x0b05], status: "soon", models: ["Gladius III", "Keris Wireless", "Harpe Ace"] },
-  { name: "HyperX",        vids: [0x0951, 0x03f0], status: "soon", models: ["Pulsefire Haste", "Pulsefire Haste 2"] },
   { name: "Endgame Gear",  vids: [0x3367], status: "soon", models: ["XM1r", "OP1 8k", "XM2we"] },
   { name: "Xtrfy",         vids: [0x30fa], status: "soon", models: ["M4", "M42", "MZ1"] },
   { name: "A4Tech / Bloody", vids: [0x09da], status: "soon", models: ["W60 Max"] },

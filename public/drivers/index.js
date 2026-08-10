@@ -20,6 +20,7 @@ import { logitech } from "./logitech.js";
 import { razer } from "./razer.js";
 import { attackShark } from "./attackshark.js";
 import { atk } from "./atk.js";
+import { hyperx } from "./hyperx.js";
 
 export const DRIVERS = {
   0x046d: logitech,     // Logitech / Logitech G
@@ -27,4 +28,6 @@ export const DRIVERS = {
   0x1d57: attackShark,  // Attack Shark (X11 family)
   0x373b: atk,          // ATK, VXE
   0x3554: atk,          // VXE, VGN, Darmoshark (init() probes before writing anything)
+  0x0951: hyperx,       // HyperX (Kingston era)
+  0x03f0: hyperx,       // HyperX (HP era — init() probes before writing anything)
 };

@@ -4,8 +4,25 @@ import { needsWriteConsent, consentText, verifyWrite, makeSnapshot, snapshotFile
 import { imageFor, MOUSE_SVG, brandBadge } from "./images.js";
 
 const $ = id => document.getElementById(id);
+const log = (...a) => console.log("[mousekit]", ...a);
+
+// A silent failure here turns into a blank page — surface it instead.
+window.addEventListener("error", e => log("uncaught error:", e.error ?? e.message));
+window.addEventListener("unhandledrejection", e => {
+  log("unhandled rejection:", e.reason);
+  toast("Unexpected error: " + (e.reason?.message ?? e.reason), true);
+});
 const show = (id, on = true) => $(id)?.classList.toggle("hide", !on);
 const hex4 = n => "0x" + n.toString(16).padStart(4, "0");
+
+/** Full HID shape of one interface: usage pages and every report ID it accepts. */
+const hidDetail = d => d.collections.map(c => ({
+  usagePage: hex4(c.usagePage),
+  usage: hex4(c.usage),
+  in: (c.inputReports ?? []).map(r => r.reportId),
+  out: (c.outputReports ?? []).map(r => r.reportId),
+  feat: (c.featureReports ?? []).map(r => r.reportId),
+}));
 const esc = s => String(s).replace(/[<>&]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]));
 
 let toastTimer;
@@ -41,34 +58,53 @@ async function connect(showAll) {
   let picked;
   try {
     picked = await navigator.hid.requestDevice({ filters: showAll ? [] : VENDOR_FILTERS });
-  } catch (e) { return toast(e.message, true); }
-  if (!picked.length) return;
+  } catch (e) { log("requestDevice failed:", e); return toast(e.message, true); }
+  if (!picked.length) return log("picker closed without a selection");
 
-  // One physical mouse exposes several HID interfaces;
-  // the settings live on the vendor collection (usagePage 0xff00+).
-  device = picked.find(d => d.collections.some(c => c.usagePage >= 0xff00)) || picked[0];
+  log("picked:", picked.map(d => ({ name: d.productName, vid: hex4(d.vendorId), pid: hex4(d.productId), hid: hidDetail(d) })));
+
+  // One physical mouse exposes several HID interfaces; the settings usually live on
+  // a vendor collection (usagePage 0xff00+), but WHICH vendor interface differs per
+  // dongle — so probe every granted interface until one answers, vendor pages first.
+  const isVendor = d => d.collections.some(c => c.usagePage >= 0xff00);
+  const candidates = [...picked].sort((a, b) => isVendor(b) - isVendor(a));
+  device = candidates[0];
   renderDevice();
 
   driver = DRIVERS[device.vendorId];
   if (!driver) return unsupported("No protocol has been written for this brand yet.");
+  log("driver found for", VENDORS[device.vendorId]);
 
-  try {
-    await device.open();
-    state = await driver.init(device);
-  } catch (e) {
-    return unsupported(e.message);
+  state = null;
+  let lastError = null;
+  for (const candidate of candidates) {
+    try {
+      await candidate.open();
+      log("probing interface:", hidDetail(candidate));
+      state = await driver.init(candidate);
+      device = candidate;
+      log("init ok:", state);
+      break;
+    } catch (e) {
+      lastError = e;
+      log("interface failed:", e.message);
+      if (candidate.opened) await candidate.close().catch(() => {});
+    }
   }
+  if (!state) return unsupported(lastError?.message ?? "No interface answered.");
   if (state.warning) toast(state.warning, true);
 
   await loadDpi();
   await loadRate();
 
   const nothing = $("v-dpi").classList.contains("hide") && $("v-rate").classList.contains("hide");
+  log("dpi visible:", !$("v-dpi").classList.contains("hide"), "rate visible:", !$("v-rate").classList.contains("hide"));
   if (nothing) return unsupported("The device answered, but returned no DPI or report-rate values.");
 
   await takeSnapshot();
   renderSafety();
   toast("Connected ✓");
+  log("connected ✓");
 }
 
 /* ---------- safety ---------- */
@@ -288,6 +324,7 @@ async function loadRate() {
 
 /* ---------- unsupported device ---------- */
 function unsupported(why) {
+  log("unsupported:", why, { vid: hex4(device.vendorId), pid: hex4(device.productId), name: device.productName });
   show("v-device-panel", false);
   show("v-soon");
   $("soon-brand").textContent = (device.productName || VENDORS[device.vendorId] || "This device") + " — not ready yet";
@@ -296,7 +333,7 @@ function unsupported(why) {
     vid: hex4(device.vendorId),
     pid: hex4(device.productId),
     name: device.productName,
-    collections: device.collections.map(c => ({ usagePage: hex4(c.usagePage), usage: hex4(c.usage) })),
+    collections: hidDetail(device),
   }, null, 1);
   report(why);
 }
@@ -314,6 +351,8 @@ async function report(why) {
         brand: VENDORS[device.vendorId] || null,
         reason: String(why).slice(0, 200),
         collections: device.collections.map(c => hex4(c.usagePage) + ":" + hex4(c.usage)).join(" ").slice(0, 200),
+        // The full report-ID map is what makes an unseen model debuggable without the hardware.
+        hid: JSON.stringify(hidDetail(device)).slice(0, 800),
         ua: navigator.userAgent.slice(0, 200),
       }),
     });
@@ -496,7 +535,7 @@ function launchDemoForModel(brandName = "Attack Shark", modelName = "R11") {
     };
 
     range.onchange = () => {
-      toast(range.value + " DPI applied ✓");
+      toast(range.value + " DPI — demo only, nothing was written to a device", true);
     };
   }
   if ($("dpi-val")) $("dpi-val").textContent = 1600;
@@ -515,7 +554,7 @@ function launchDemoForModel(brandName = "Attack Shark", modelName = "R11") {
       btn.onclick = () => {
         [...seg.children].forEach(b => b.setAttribute("aria-pressed", "false"));
         btn.setAttribute("aria-pressed", "true");
-        toast(hz + " Hz applied ✓");
+        toast(hz + " Hz — demo only, nothing was written to a device", true);
       };
       seg.appendChild(btn);
     });
@@ -542,12 +581,14 @@ if (presetGroup) {
   presetGroup.addEventListener("click", e => {
     const btn = e.target.closest("button[data-dpi]");
     if (!btn) return;
-    const dpiVal = btn.dataset.dpi;
     const range = $("dpi-range");
     if (range) {
-      range.value = dpiVal;
-      if ($("dpi-val")) $("dpi-val").textContent = dpiVal;
-      toast(dpiVal + " DPI selected ✓");
+      range.value = btn.dataset.dpi;
+      if ($("dpi-val")) $("dpi-val").textContent = btn.dataset.dpi;
+      // Run the real write path — it toasts the actual outcome (written, snapped,
+      // rolled back or failed). A bare "selected ✓" here would claim a write that
+      // never happened.
+      range.dispatchEvent(new Event("change"));
     }
     presetGroup.querySelectorAll(".preset-btn").forEach(b => b.classList.toggle("active", b === btn));
   });

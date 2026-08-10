@@ -6,14 +6,17 @@
  *                razerchromacommon.c (class 0x04 / id 0x05 = set DPI, VARSTORE = 0x01)
  *   Attack Shark HarukaYamamoto0/attack-shark-x11-driver docs/*.md
  *   ATK          hub.atk.pro bundle (COMPX): report 8, 64-byte packet, [0] = command
+ *   HyperX       santeri3700/hyperx_pulsefire_dart_reverse_engineering protocol/index.md,
+ *                libratbag PR #1786 (driver-hyperx.c)
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createMockDevice, pad } from "./mock-hid.js";
-import { mockRazer, mockAttackShark, mockAtk } from "./mocks.js";
+import { mockRazer, mockAttackShark, mockAtk, mockHyperX } from "./mocks.js";
 import { razer } from "../public/drivers/razer.js";
 import { attackShark, DPI_TEMPLATE, checksum, dpiToBytes, bytesToDpi } from "../public/drivers/attackshark.js";
 import { atk } from "../public/drivers/atk.js";
+import { hyperx } from "../public/drivers/hyperx.js";
 
 /* ============================ Razer ============================ */
 
@@ -151,6 +154,71 @@ test("attack shark: an unreadable device asks for confirmation before writing", 
   const state = await attackShark.init(dev);
   assert.equal(state.needsConfirm, true, "must flag that the real config was never read");
   assert.match(state.confirmText, /overwrite/i);
+});
+
+/* ============================ HyperX ============================ */
+
+test("hyperx: packets are 64-byte output reports with no report id", async () => {
+  const { dev } = mockHyperX();
+  await hyperx.init(dev);
+  for (const packet of dev.sent) {
+    assert.equal(packet.kind, "output");
+    assert.equal(packet.reportId, 0x00);
+    assert.equal(packet.bytes.length, 64);
+  }
+});
+
+test("hyperx: setDpi matches the documented sample — 16000 DPI is 320 steps, little-endian", async () => {
+  const { dev, stored } = mockHyperX();
+  const state = await hyperx.init(dev);
+  dev.sent.length = 0;
+
+  // santeri3700 protocol/index.md: 16000 ÷ 50 = 320 → transmitted as 0x40 0x01
+  assert.equal(await hyperx.writeDpi(dev, state, 16000), 16000);
+  assert.equal(stored.dpiSteps[1], 320, "active profile 1 must hold the new value");
+
+  const set = dev.sent.find(s => s.bytes[0] === 0xd3);
+  // [0]=cmd [1]=set-value mode [2]=profile [3]=2 bytes follow [4..5]=steps LE
+  assert.deepEqual(set.bytes.slice(0, 6), [0xd3, 0x02, 0x01, 0x02, 0x40, 0x01]);
+  assert.ok(stored.saves > 0, "0xde must persist the change to flash");
+});
+
+test("hyperx: the Haste Wireless PIDs use 100-DPI hardware steps", async () => {
+  const { dev, stored } = mockHyperX({ productId: 0x028e });
+  const state = await hyperx.init(dev);
+  assert.equal(state.step, 100, "libratbag device file: 200..16000 in 100-DPI increments");
+
+  assert.equal(await hyperx.writeDpi(dev, state, 1600), 1600);
+  assert.equal(stored.dpiSteps[1], 16, "1600 DPI must be sent as 16 units, not 32");
+});
+
+test("hyperx: report rate is an index into 125/250/500/1000", async () => {
+  const { dev, stored } = mockHyperX({ rate: 3 });
+  const state = await hyperx.init(dev);
+  const rate = await hyperx.readRate(dev, state);
+  assert.deepEqual(rate.options.map(o => [o.raw, o.hz]), [[0, 125], [1, 250], [2, 500], [3, 1000]]);
+  assert.equal(rate.value, 3);
+
+  dev.sent.length = 0;
+  assert.equal(await hyperx.writeRate(dev, state, 0), 0);
+  assert.equal(stored.rate, 0);
+  const set = dev.sent.find(s => s.bytes[0] === 0xd0);
+  assert.deepEqual(set.bytes.slice(0, 5), [0xd0, 0x00, 0x00, 0x01, 0x00]);
+});
+
+test("hyperx: the written profile comes from the device's 0x53 state, not a hard-coded 0", async () => {
+  const { dev, stored } = mockHyperX({ profile: 3 });
+  const state = await hyperx.init(dev);
+
+  await hyperx.writeDpi(dev, state, 2400);
+  assert.equal(stored.dpiSteps[3], 48, "profile 3 must be the one written");
+  assert.equal(stored.dpiSteps[1], 16, "profile 1 must be left alone");
+});
+
+test("hyperx: a silent device is rejected before any write", async () => {
+  const dev = createMockDevice({ onOutput: () => null });
+  await assert.rejects(() => hyperx.init(dev), /no response/);
+  assert.ok(dev.sent.every(s => s.bytes[0] === 0x53), "only the read-only probe may be sent");
 });
 
 /* ============================= ATK ============================= */
