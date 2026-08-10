@@ -1,7 +1,7 @@
 /**
- * ATK / VXE / VGN / Darmoshark — COMPX platform
+ * ATK / VXE / VGN / Darmoshark — two protocol generations, picked by transport.
  *
- * Protocol extracted from ATK's own web driver (hub.atk.pro).
+ * LEGACY (wired COMPX platform) — extracted from ATK's own web driver (hub.atk.pro).
  * Feature report 8, 64-byte packet, [0] = command. No checksum.
  *
  *   0x80  GetFirmwareVersion   device probe (read-only — safe)
@@ -18,30 +18,27 @@
  *   [4] brightness    [5] speed   [6] colour index   [7] reserved
  *   [8] battery level [9] link status
  *
- * DPI is a plain 16-bit value — no sensor lookup table needed, unlike Attack Shark.
+ * EEPROM (V HUB platform — A9 series, Nearlink; dongle 0x373b:0x10c9, wired
+ * 0x373b:0x1135). These declare report 8 as an input/output pair, no feature
+ * report. Documented by github.com/cyberphantom52/libatk-rs and atk-hub-rs.
+ * 16-byte packet on output report 8, reply mirrors it on input report 8:
  *
- * Transport: wired mice expose the packet as feature report 8. The Nearlink
- * devices (A9 SE dongle 0x373b:0x10c9, A9 SE wired 0x373b:0x1135) have no feature
- * report 8 — they carry two input/output pairs on the 0xff02 collections, IDs 8
- * and 19, and no public source documents which pipe carries the config. init()
- * probes each pipe with the read-only GetFirmwareVersion and keeps the one that
- * echoes; replies are accepted from either pipe, matched by the command byte.
+ *   [0] command  [1] status  [2..3] EEPROM address BE  [4] data length
+ *   [5..14] data  [15] checksum = 0x55 − (reportId + Σ bytes 0..14)
+ *
+ *   0x12  GetMouseVersion  probe (read-only — safe)
+ *   0x08  GetEEPROM        read `len` bytes at an address
+ *   0x07  SetEEPROM        write — the only write command this driver sends
+ *
+ * EEPROM map (single bytes travel as value + complement (0x55 − value) pairs):
+ *   0x00  report rate + crc, profile count + crc, active profile + crc  (6 bytes)
+ *   0x0c/0x14/0x1c/0x24  DPI presets, 2 per block, 4 bytes each: [x, y, ex, crc]
+ *         steps = dpi/50 − 1;  x = y = steps & 0xff;  ex = ⌊0x44·steps/256⌋;
+ *         crc = 0x55 − x − y − ex
  */
 
 const REPORT_ID = 8;
 const PACKET_SIZE = 64;
-const OUTPUT_IDS = [8, 19];
-
-const outputIdsFor = dev =>
-  OUTPUT_IDS.filter(id => dev.collections.some(c => (c.outputReports ?? []).some(r => r.reportId === id)));
-
-/** Feature report 8 when the interface has one (or declares nothing, as older
- *  Chrome builds do) — otherwise the Nearlink output-report channels. */
-const usesOutputTransport = dev =>
-  outputIdsFor(dev).length > 0 &&
-  !dev.collections.some(c => (c.featureReports ?? []).some(r => r.reportId === REPORT_ID));
-
-const channels = new WeakMap();     // dev → the output report ID that answered the probe
 
 const CMD = {
   GET_FIRMWARE: 0x80,
@@ -58,30 +55,16 @@ export const RATES = [
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+/** Feature report 8 when the interface has one (or declares nothing, as older
+ *  Chrome builds do) — otherwise the device is on the EEPROM/Nearlink platform. */
+const usesEeprom = dev =>
+  dev.collections.some(c => (c.outputReports ?? []).some(r => r.reportId === REPORT_ID)) &&
+  !dev.collections.some(c => (c.featureReports ?? []).some(r => r.reportId === REPORT_ID));
+
 async function command(dev, cmd, fill) {
   const p = new Uint8Array(PACKET_SIZE);
   p[0] = cmd;
   if (fill) fill(p);
-
-  if (usesOutputTransport(dev)) {
-    const id = channels.get(dev) ?? outputIdsFor(dev)[0];
-    return new Promise((resolve, reject) => {
-      const finish = (fn, arg) => { clearTimeout(timer); dev.removeEventListener("inputreport", onReport); fn(arg); };
-      const timer = setTimeout(() => finish(reject, new Error("no reply (timeout)")), 1000);
-      const onReport = e => {
-        const b = new Uint8Array(e.data.buffer);
-        if (b[0] !== cmd) {                               // capture material for unseen variants
-          if (OUTPUT_IDS.includes(e.reportId))
-            console.log(`[mousekit] atk: report ${e.reportId} replied 0x${b[0].toString(16)} to command 0x${cmd.toString(16)}`,
-              Array.from(b.slice(0, 12)));
-          return;
-        }
-        finish(resolve, b);
-      };
-      dev.addEventListener("inputreport", onReport);
-      dev.sendReport(id, p).catch(err => finish(reject, err));
-    });
-  }
 
   await dev.sendFeatureReport(REPORT_ID, p);
   await sleep(25);
@@ -97,24 +80,105 @@ async function readConfig(dev) {
   return { rate: r[1], stage: Math.min(Math.max(r[2], 0), 7) };   // stage is a 0-based index
 }
 
+/* ------------------------------- EEPROM platform ------------------------------- */
+
+const EE = { GET_VERSION: 0x12, GET: 0x08, SET: 0x07 };
+const EE_ADDR = { INFO: 0x0000, DPI_PAIRS: [0x0c, 0x14, 0x1c, 0x24] };
+
+export const EE_RATES = [
+  { raw: 0x40, hz: 8000 }, { raw: 0x20, hz: 4000 }, { raw: 0x10, hz: 2000 },
+  { raw: 0x01, hz: 1000 }, { raw: 0x02, hz: 500 }, { raw: 0x04, hz: 250 }, { raw: 0x08, hz: 125 },
+];
+
+export function eePacket(cmd, addr = 0, len = 0, data = []) {
+  const p = new Uint8Array(16);
+  p[0] = cmd; p[2] = addr >> 8; p[3] = addr & 0xff; p[4] = len;
+  data.forEach((v, i) => { p[5 + i] = v; });
+  const sum = REPORT_ID + cmd + addr + len + data.reduce((a, b) => a + b, 0);
+  p[15] = (0x55 - sum) & 0xff;
+  return p;
+}
+
+/** 4-byte DPI entry. `ex` names the 256-step block, `x` the position inside it. */
+export const eeDpiEncode = dpi => {
+  const s = Math.round(dpi / 50) - 1;
+  const x = s & 0xff;
+  const ex = Math.floor((0x44 * s) / 256);
+  return [x, x, ex, (0x55 - x - x - ex) & 0xff];
+};
+
+export const eeDpiDecode = (x, ex) => {
+  const block = Math.max(0, Math.round((Math.round((256 * ex) / 0x44) - x) / 256));
+  return (x + 256 * block + 1) * 50;
+};
+
+function eeCommand(dev, cmd, addr, len, data) {
+  const p = eePacket(cmd, addr, len, data);
+  return new Promise((resolve, reject) => {
+    const finish = (fn, arg) => { clearTimeout(timer); dev.removeEventListener("inputreport", onReport); fn(arg); };
+    const timer = setTimeout(() =>
+      finish(reject, new Error("no reply (timeout) — a sleeping wireless mouse wakes up when moved")), 1000);
+    const onReport = e => {
+      const b = new Uint8Array(e.data.buffer);
+      if (b[0] !== cmd) return;                         // reply to a different command
+      finish(resolve, b);
+    };
+    dev.addEventListener("inputreport", onReport);
+    dev.sendReport(REPORT_ID, p).catch(err => finish(reject, err));
+  });
+}
+
+/** data[0]=rate, [2]=profile count, [4]=active profile (each followed by its crc). */
+const eeInfo = dev => eeCommand(dev, EE.GET, EE_ADDR.INFO, 6)
+  .then(b => ({ rate: b[5], count: b[7], active: Math.min(Math.max(b[9], 0), 7) }));
+
+const eeDriver = {
+  async readDpi(dev) {
+    const { active } = await eeInfo(dev);
+    const pair = await eeCommand(dev, EE.GET, EE_ADDR.DPI_PAIRS[active >> 1], 8);
+    const slot = 5 + (active & 1) * 4;                  // data starts at byte [5]
+    return { min: 50, max: 26000, step: 50, value: eeDpiDecode(pair[slot], pair[slot + 2]) };
+  },
+
+  async writeDpi(dev, s, dpi) {
+    const { active } = await eeInfo(dev);
+    const addr = EE_ADDR.DPI_PAIRS[active >> 1];
+    const pair = Array.from((await eeCommand(dev, EE.GET, addr, 8)).slice(5, 13));
+    pair.splice((active & 1) * 4, 4, ...eeDpiEncode(dpi));   // only the active slot changes
+    await eeCommand(dev, EE.SET, addr, 8, pair);
+    return (await this.readDpi(dev)).value;
+  },
+
+  async readRate(dev) {
+    const { rate } = await eeInfo(dev);
+    return { options: EE_RATES, value: rate };
+  },
+
+  async writeRate(dev, s, raw) {
+    const { count, active } = await eeInfo(dev);        // preserve the other info bytes
+    const pack = v => [v & 0xff, (0x55 - v) & 0xff];
+    await eeCommand(dev, EE.SET, EE_ADDR.INFO, 6, [...pack(raw), ...pack(count), ...pack(active)]);
+    return (await this.readRate(dev)).value;
+  },
+};
+
+/* --------------------------------- dispatcher --------------------------------- */
+
 export const atk = {
   async init(dev) {
     if (!dev.collections.some(c => c.usagePage >= 0xff00))
       throw new Error("Configuration interface not found — try picking the other entry for this mouse in the list.");
 
-    let r = null;
-    if (usesOutputTransport(dev)) {
-      for (const id of outputIdsFor(dev)) {             // read-only probe on each pipe
-        channels.set(dev, id);
-        r = await command(dev, CMD.GET_FIRMWARE).catch(() => null);
-        if (r && r[0] === CMD.GET_FIRMWARE) break;
-        r = null;
-      }
-    } else {
-      r = await command(dev, CMD.GET_FIRMWARE).catch(() => null);
-      if (r && r[0] !== CMD.GET_FIRMWARE) r = null;
+    if (usesEeprom(dev)) {
+      // Read-only probe; a mouse that is asleep behind the dongle answers nothing.
+      const v = await eeCommand(dev, EE.GET_VERSION).catch(() => null);
+      if (!v)
+        throw new Error("The ATK protocol got no reply — if the mouse is asleep, move it and reconnect.");
+      return { proto: "ee", firmware: v[5] + "." + v[6] };
     }
-    if (!r)
+
+    const r = await command(dev, CMD.GET_FIRMWARE).catch(() => null);
+    if (!r || r[0] !== CMD.GET_FIRMWARE)
       throw new Error("The ATK protocol got no reply — this model may be on a different platform.");
 
     const config = await readConfig(dev);
@@ -122,6 +186,7 @@ export const atk = {
   },
 
   async readDpi(dev, s) {
+    if (s.proto === "ee") return eeDriver.readDpi(dev);
     const r = await command(dev, CMD.GET_DPI);
     const value = r[1 + s.stage * 2] | (r[2 + s.stage * 2] << 8);
     // ponytail: the ceiling is 12000..26000 depending on the model. The device clamps it,
@@ -130,6 +195,7 @@ export const atk = {
   },
 
   async writeDpi(dev, s, dpi) {
+    if (s.proto === "ee") return eeDriver.writeDpi(dev, s, dpi);
     await command(dev, CMD.SET_DPI, p => {
       p[2] = s.stage;
       p[3] = dpi & 0xff;
@@ -139,12 +205,14 @@ export const atk = {
   },
 
   async readRate(dev, s) {
+    if (s.proto === "ee") return eeDriver.readRate(dev);
     const config = await readConfig(dev);
     if (config) s.stage = config.stage;               // the DPI button may have moved it
     return { options: RATES, value: config?.rate ?? 0 };
   },
 
   async writeRate(dev, s, raw) {
+    if (s.proto === "ee") return eeDriver.writeRate(dev, s, raw);
     await command(dev, CMD.SET_RATE, p => { p[3] = raw; });
     return (await this.readRate(dev, s)).value || raw;   // if reads are unsupported, show what we wrote
   },

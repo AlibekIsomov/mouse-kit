@@ -111,6 +111,28 @@ test("atk: only the five whitelisted commands are sent", async () => {
     assert.ok(!FORBIDDEN_ATK_COMMANDS.includes(cmd), `destructive atk command 0x${cmd.toString(16)}`);
 });
 
+test("atk nearlink: only version/get/set commands, and SetEEPROM only at rate and DPI addresses", async () => {
+  const { dev } = mockAtkNearlink();
+  await exercise(atk, dev);
+
+  const used = new Set(dev.sent.map(s => s.bytes[0]));
+  for (const cmd of used)
+    assert.ok([0x12, 0x08, 0x07].includes(cmd), `unexpected EEPROM command 0x${cmd.toString(16)}`);
+
+  // 0x01 DownLoadData, 0x0d EnterUSBUpgradeMode, 0x09 RestoreFactory, 0x05 dongle
+  // re-pairing — all present in the vendor protocol, none may ever leave this app.
+  for (const cmd of [0x01, 0x0d, 0x09, 0x05])
+    assert.ok(!used.has(cmd), `destructive EEPROM command 0x${cmd.toString(16)} was sent`);
+
+  // Writes must stay inside the documented rate/DPI area — a stray address would
+  // overwrite key bindings or macros the user never asked us to touch.
+  const allowedAddrs = new Set([0x0000, 0x000c, 0x0014, 0x001c, 0x0024]);
+  for (const s of dev.sent.filter(s => s.bytes[0] === 0x07)) {
+    const addr = (s.bytes[2] << 8) | s.bytes[3];
+    assert.ok(allowedAddrs.has(addr), `SetEEPROM at forbidden address 0x${addr.toString(16)}`);
+  }
+});
+
 test("hyperx: only the five documented config commands — never LED, buttons or macros", async () => {
   const { dev } = mockHyperX();
   await exercise(hyperx, dev);

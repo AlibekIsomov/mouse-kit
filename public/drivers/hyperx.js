@@ -80,14 +80,22 @@ function gen2WriteConfig(dev, s) {
 
 const gen2 = {
   async init(dev) {
-    // Read-only probe: battery query, answered on report 0x51.
+    // Battery query — the only documented read. Wireless models answer on report
+    // 0x51; the wired Haste 2 (0x0b97) has no battery and stays silent, so a
+    // timeout is expected there and must not fail init. The 0xff90 collection with
+    // its even/odd report table is already a solid fingerprint for this family,
+    // and a failed send (interface rejected the write) still throws.
     const battery = await new Promise((resolve, rejectFn) => {
       const finish = (fn, arg) => { clearTimeout(timer); dev.removeEventListener("inputreport", onReport); fn(arg); };
-      const timer = setTimeout(() =>
-        finish(rejectFn, new Error("no response (timeout) — a sleeping wireless mouse wakes up when moved")), 1000);
+      const timer = setTimeout(() => finish(resolve, null), 1000);
       const onReport = e => {
-        if (e.reportId !== 0x51) return;
-        finish(resolve, new Uint8Array(e.data.buffer)[1]);
+        const b = new Uint8Array(e.data.buffer);
+        if (e.reportId !== 0x51) {                      // capture material for unseen variants
+          console.log(`[mousekit] hyperx gen2: report 0x${e.reportId.toString(16)} during probe`,
+            Array.from(b.slice(0, 12)));
+          return;
+        }
+        finish(resolve, b[1]);
       };
       dev.addEventListener("inputreport", onReport);
       gen2Send(dev, 0x50, [0x02]).catch(err => finish(rejectFn, err));

@@ -5,6 +5,7 @@
 import { createMockDevice, pad } from "./mock-hid.js";
 import { ADDR } from "../public/drivers/logitech.js";
 import { DPI_TEMPLATE } from "../public/drivers/attackshark.js";
+import { eeDpiEncode } from "../public/drivers/atk.js";
 
 const SW_ID = 0x0a;
 export const DPI_FEATURE = 1;
@@ -131,7 +132,7 @@ export function mockHyperX({ dpiSteps = [8, 16, 32, 64, 128], profile = 1, rate 
  * reports, even ID = request, ID+1 = response. Only the battery is readable.
  * Collections mirror the HID map captured from a real Haste 2 (0x03f0:0x0b97).
  */
-export function mockHyperXGen2({ battery = 0x63 } = {}) {
+export function mockHyperXGen2({ battery = 0x63, mute = false } = {}) {
   const stored = { configs: [], commits: 0 };
   const dev = createMockDevice({
     vendorId: 0x03f0, productId: 0x0b97,
@@ -143,7 +144,7 @@ export function mockHyperXGen2({ battery = 0x63 } = {}) {
     }],
     onOutput({ reportId, bytes }) {
       if (reportId === 0x50 && bytes[0] === 0x02)
-        return { reportId: 0x51, bytes: pad([0x02, battery, 0x01, 0x1e, 0x00, 0xd0, 0x0f], 63) };
+        return mute ? null : { reportId: 0x51, bytes: pad([0x02, battery, 0x01, 0x1e, 0x00, 0xd0, 0x0f], 63) };
       if (reportId === 0x32) stored.configs.push(bytes);
       if (reportId === 0x36) stored.commits++;
       return null;
@@ -181,12 +182,17 @@ export function mockAtk({ dpi = 1600, rate = 0x01, stage = 0 } = {}) {
 }
 
 /**
- * ATK Nearlink dongle (VID 0x373b PID 0x10c9, e.g. A9 SE): same packets, but report 8
- * is an input/output pair — there is no feature report 8. Collections mirror the HID
- * map captured from the real dongle.
+ * ATK Nearlink / V HUB platform (A9 SE dongle 0x373b:0x10c9, wired 0x1135): 16-byte
+ * EEPROM packets on an input/output report-8 pair — no feature report 8. Collections
+ * mirror the HID map captured from the real dongle. The mock is a real EEPROM: reads
+ * and writes hit the same byte array, so round-trips are genuine.
  */
-export function mockAtkNearlink({ dpi = 1600, rate = 0x01, stage = 0, channel = 8 } = {}) {
-  const stored = { dpi: [dpi, 0, 0, 0, 0, 0, 0, 0], rate, stage };
+export function mockAtkNearlink({ dpi = 1600, rate = 0x01, active = 0 } = {}) {
+  const eeprom = new Uint8Array(0x100);
+  const packByte = (addr, v) => { eeprom[addr] = v; eeprom[addr + 1] = (0x55 - v) & 0xff; };
+  packByte(0x0, rate); packByte(0x2, 8); packByte(0x4, active);
+  for (let i = 0; i < 8; i++) eeprom.set(eeDpiEncode(dpi), 0x0c + (i >> 1) * 8 + (i & 1) * 4);
+
   const dev = createMockDevice({
     vendorId: 0x373b, productId: 0x10c9,
     collections: [
@@ -195,10 +201,18 @@ export function mockAtkNearlink({ dpi = 1600, rate = 0x01, stage = 0, channel = 
       { usagePage: 0xff04, usage: 0x02, featureReports: [{ reportId: 6 }] },
     ],
     onOutput({ reportId, bytes }) {
-      if (reportId !== channel) return null;              // the other pipe stays silent
-      const reply = atkReply(stored, bytes);
-      return reply && { reportId: channel, bytes: reply };
+      if (reportId !== 8) return null;
+      const [cmd, , aHi, aLo, len] = bytes;
+      const addr = (aHi << 8) | aLo;
+      const reply = data => ({ reportId: 8, bytes: pad([cmd, 0, aHi, aLo, len, ...data], 16) });
+      if (cmd === 0x12) return reply([3, 1]);                                   // GetMouseVersion
+      if (cmd === 0x08) return reply([...eeprom.slice(addr, addr + len)]);      // GetEEPROM
+      if (cmd === 0x07) {                                                       // SetEEPROM
+        eeprom.set(bytes.slice(5, 5 + len), addr);
+        return reply([...eeprom.slice(addr, addr + len)]);
+      }
+      return null;
     },
   });
-  return { dev, stored };
+  return { dev, eeprom };
 }

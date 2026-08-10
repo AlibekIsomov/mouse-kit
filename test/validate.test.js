@@ -70,6 +70,17 @@ test("report text fields are trimmed and capped", () => {
   assert.equal(r.value.reason.length, 200);
 });
 
+test("report logs keep their line breaks but are still capped", () => {
+  const r = validateReport({
+    vendorId: 1, productId: 2,
+    outcome: "connected",
+    logs: "[mousekit] line one\n[mousekit]   line   two\n" + "x".repeat(5000),
+  });
+  assert.equal(r.value.outcome, "connected");
+  assert.match(r.value.logs, /line one\n\[mousekit\] line two/, "newlines survive, spaces collapse");
+  assert.ok(r.value.logs.length <= 2000, "logs are capped");
+});
+
 /* ---------- brand badges ---------- */
 
 test("every brand gets a badge of the same shape", () => {

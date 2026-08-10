@@ -17,6 +17,10 @@ export const LIMITS = {
 
 const clean = (value, max) => String(value ?? "").replace(/\s+/g, " ").trim().slice(0, max);
 
+/** Like `clean`, but newlines survive — used for the multi-line client log block. */
+const cleanBlock = (value, max) =>
+  String(value ?? "").replace(/[^\S\n]+/g, " ").replace(/\n{3,}/g, "\n\n").trim().slice(0, max);
+
 /** A link must be absent or a plain http(s) URL — no javascript:, data:, or mailto:. */
 function cleanLink(value) {
   const text = clean(value, LIMITS.link);
@@ -74,9 +78,11 @@ export function validateReport(body) {
       productId: pid,
       productName: clean(body.productName, 120),
       brand: clean(body.brand, 80),
+      outcome: clean(body.outcome, 20),
       reason: clean(body.reason, 200),
       collections: clean(body.collections, 200),
       hid: clean(body.hid, 800),          // full report-ID map — needed to add a driver blind
+      logs: cleanBlock(body.logs, 2000),  // the client's "[mousekit]" console lines
       ua: clean(body.ua, 200),
     },
   };

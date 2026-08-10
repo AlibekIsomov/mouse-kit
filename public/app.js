@@ -4,6 +4,22 @@ import { needsWriteConsent, consentText, verifyWrite, makeSnapshot, snapshotFile
 import { imageFor, MOUSE_SVG, brandBadge } from "./images.js";
 
 const $ = id => document.getElementById(id);
+
+/**
+ * Every "[mousekit]" console line (including the drivers' own diagnostics) is kept
+ * in a ring buffer and attached to device reports, so a failure arrives in Telegram
+ * with the full story instead of needing a screenshot of the console.
+ */
+const logBuffer = [];
+const rawConsoleLog = console.log.bind(console);
+console.log = (...a) => {
+  rawConsoleLog(...a);
+  if (!String(a[0]).startsWith("[mousekit]")) return;
+  const line = a.map(x => (x instanceof Error ? x.message : typeof x === "string" ? x : JSON.stringify(x)))
+    .join(" ").slice(0, 400);
+  logBuffer.push(line);
+  if (logBuffer.length > 60) logBuffer.shift();
+};
 const log = (...a) => console.log("[mousekit]", ...a);
 
 // A silent failure here turns into a blank page — surface it instead.
@@ -104,7 +120,8 @@ async function connect(showAll) {
   await takeSnapshot();
   renderSafety();
   toast("Connected ✓");
-  log("connected ✓");
+  log("connected ✓ snapshot:", snapshot);
+  sendReport("connected", "ok").catch(() => {});   // beta drivers: every live result is data
 }
 
 /* ---------- safety ---------- */
@@ -339,23 +356,29 @@ function unsupported(why) {
 }
 
 /** The Telegram message is sent from the server only — the bot token must never reach the browser. */
+function sendReport(outcome, why) {
+  return fetch("/api/report", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      vendorId: device.vendorId,
+      productId: device.productId,
+      productName: String(device.productName || "").slice(0, 120),
+      brand: VENDORS[device.vendorId] || null,
+      outcome,
+      reason: String(why).slice(0, 200),
+      collections: device.collections.map(c => hex4(c.usagePage) + ":" + hex4(c.usage)).join(" ").slice(0, 200),
+      // The full report-ID map is what makes an unseen model debuggable without the hardware.
+      hid: JSON.stringify(hidDetail(device)).slice(0, 800),
+      logs: logBuffer.join("\n").slice(-2000),
+      ua: navigator.userAgent.slice(0, 200),
+    }),
+  });
+}
+
 async function report(why) {
   try {
-    const res = await fetch("/api/report", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        vendorId: device.vendorId,
-        productId: device.productId,
-        productName: String(device.productName || "").slice(0, 120),
-        brand: VENDORS[device.vendorId] || null,
-        reason: String(why).slice(0, 200),
-        collections: device.collections.map(c => hex4(c.usagePage) + ":" + hex4(c.usage)).join(" ").slice(0, 200),
-        // The full report-ID map is what makes an unseen model debuggable without the hardware.
-        hid: JSON.stringify(hidDetail(device)).slice(0, 800),
-        ua: navigator.userAgent.slice(0, 200),
-      }),
-    });
+    const res = await sendReport("unsupported", why);
     $("soon-msg").textContent = res.ok
       ? "We received the details of your device — this model is now on the list."
       : "Could not send the details, but the model has been noted.";

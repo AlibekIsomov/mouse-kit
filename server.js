@@ -164,13 +164,15 @@ async function handleReport(req, res) {
   if (!checked.ok) return send(res, 400, checked.error);
   const d = checked.value;
 
-  const key = `${d.vendorId}:${d.productId}`;
+  // Repeat identical reports stay silent, but a different outcome or a different
+  // failure for the same mouse is new information and goes through.
+  const key = `${d.vendorId}:${d.productId}:${d.outcome}:${d.reason.slice(0, 60)}`;
   if (!remembered.has(key) && !overLimit(globalHits, REPORTS_GLOBAL, 3600_000, Date.now())) {
     if (remembered.size >= MAX_REMEMBERED) remembered.clear();
     remembered.add(key);
 
     telegram([
-      "🖱 <b>New unsupported mouse</b>",
+      d.outcome === "connected" ? "✅ <b>Mouse connected</b>" : "🖱 <b>New unsupported mouse</b>",
       `Name: <code>${escapeHtml(d.productName || "—")}</code>`,
       `Brand: ${escapeHtml(d.brand || "unknown")}`,
       `VID/PID: <code>${hex4(d.vendorId)} / ${hex4(d.productId)}</code>`,
@@ -178,7 +180,8 @@ async function handleReport(req, res) {
       `HID: <code>${escapeHtml(d.hid || "—")}</code>`,
       `Reason: ${escapeHtml(d.reason || "—")}`,
       `UA: <code>${escapeHtml(d.ua || "—")}</code>`,
-    ].join("\n"));
+      d.logs ? `Logs:\n<pre>${escapeHtml(d.logs)}</pre>` : "",
+    ].filter(Boolean).join("\n"));
   }
   send(res, 200, '{"ok":true}', MIME[".json"]);
 }

@@ -15,7 +15,7 @@ import { createMockDevice, pad } from "./mock-hid.js";
 import { mockRazer, mockAttackShark, mockAtk, mockAtkNearlink, mockHyperX, mockHyperXGen2 } from "./mocks.js";
 import { razer } from "../public/drivers/razer.js";
 import { attackShark, DPI_TEMPLATE, checksum, dpiToBytes, bytesToDpi } from "../public/drivers/attackshark.js";
-import { atk } from "../public/drivers/atk.js";
+import { atk, eePacket, eeDpiEncode, eeDpiDecode } from "../public/drivers/atk.js";
 import { hyperx } from "../public/drivers/hyperx.js";
 
 /* ============================ Razer ============================ */
@@ -250,6 +250,20 @@ test("hyperx gen2: writeDpi sends the documented 0x32 packet and the commit sequ
   assert.deepEqual([...ids].sort((a, b) => a - b), [0x32, 0x36, 0x50], "only config, commit and its 0x50 prefix");
 });
 
+test("hyperx gen2: the wired Haste 2 has no battery — a silent probe still connects, read-only", async () => {
+  const { dev, stored } = mockHyperXGen2({ mute: true });
+  const state = await hyperx.init(dev);
+
+  assert.equal(state.gen, 2, "the 0xff90 report map is the fingerprint, not the battery reply");
+  assert.equal(state.battery, null);
+  assert.equal(state.needsConfirm, true);
+  assert.deepEqual(dev.sent.map(s => s.reportId), [0x50], "only the read-only battery query was sent");
+
+  // Writes are fire-and-forget on this generation, so they still work after consent.
+  assert.equal(await hyperx.writeDpi(dev, state, 1600), 1600);
+  assert.equal(stored.commits, 1);
+});
+
 test("hyperx gen2: report rate codes are 8000/Hz and travel in the same config packet", async () => {
   const { dev, stored } = mockHyperXGen2();
   const state = await hyperx.init(dev);
@@ -315,31 +329,53 @@ test("atk: the active DPI stage comes from the device, not a hard-coded 0", asyn
   assert.equal(stored.dpi[0], 1600, "stage 0 must be left alone");
 });
 
-test("atk: the Nearlink dongle is driven over output report 8, not a feature report", async () => {
-  const { dev, stored } = mockAtkNearlink({ stage: 2 });
+test("atk nearlink: 16-byte EEPROM packets on output report 8, with the 0x55 checksum", async () => {
+  const { dev } = mockAtkNearlink();
   const state = await atk.init(dev);
-  assert.equal(state.stage, 2, "config must be readable over the output transport");
+  assert.equal(state.proto, "ee", "the report map must select the EEPROM platform");
 
-  assert.equal(await atk.writeDpi(dev, state, 3200), 3200);
-  assert.equal(stored.dpi[2], 3200);
-
+  await atk.readDpi(dev, state);
   for (const packet of dev.sent) {
-    assert.equal(packet.kind, "output", "the dongle has no feature report 8 — sendFeatureReport would throw");
+    assert.equal(packet.kind, "output", "this platform has no feature report 8");
     assert.equal(packet.reportId, 8);
-    assert.equal(packet.bytes.length, 64);
+    assert.equal(packet.bytes.length, 16);
+    const sum = 8 + packet.bytes.slice(0, 15).reduce((a, b) => a + b, 0);
+    assert.equal(packet.bytes[15], (0x55 - sum) & 0xff, "checksum byte [15]");
   }
+
+  // MouseInfo query, byte for byte: GetEEPROM(0x08) at 0x0000, 6 bytes.
+  assert.deepEqual(Array.from(eePacket(0x08, 0x0000, 6)),
+    [0x08, 0, 0, 0, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x3f]);
 });
 
-test("atk: a Nearlink device that only answers on report 19 is found by the channel probe", async () => {
-  const { dev, stored } = mockAtkNearlink({ channel: 19 });
+test("atk nearlink: DPI entries round-trip through the 4-byte x/ex encoding", () => {
+  // 1600 DPI → steps 31: x = 31, ex = ⌊0x44·31/256⌋ = 8, crc = 0x55−31−31−8 = 0x0f
+  assert.deepEqual(eeDpiEncode(1600), [31, 31, 8, 0x0f]);
+  for (const dpi of [50, 400, 800, 1600, 3200, 12800, 12850, 26000])
+    assert.equal(eeDpiDecode(...[eeDpiEncode(dpi)[0], eeDpiEncode(dpi)[2]]), dpi, `round-trip ${dpi}`);
+});
+
+test("atk nearlink: writeDpi rewrites only the active preset's 4-byte slot", async () => {
+  const { dev, eeprom } = mockAtkNearlink({ dpi: 1600, active: 3 });
   const state = await atk.init(dev);
 
-  assert.equal(await atk.writeDpi(dev, state, 1600), 1600);
-  assert.equal(stored.dpi[0], 1600);
+  assert.equal(await atk.writeDpi(dev, state, 3200), 3200, "read back through the mock EEPROM");
+  // preset 3 lives in pair block 0x14, second slot (bytes 4..7)
+  assert.deepEqual([...eeprom.slice(0x14 + 4, 0x14 + 8)], eeDpiEncode(3200), "active slot updated");
+  assert.deepEqual([...eeprom.slice(0x14, 0x14 + 4)], eeDpiEncode(1600), "sibling slot untouched");
+});
 
-  const writes = dev.sent.filter(s => s.bytes[0] !== 0x80);       // everything after the probe
-  assert.ok(writes.length > 0, "nothing was written");
-  for (const s of writes) assert.equal(s.reportId, 19, "config must move to the pipe that answered");
+test("atk nearlink: report rate uses the V HUB codes and keeps the other info bytes", async () => {
+  const { dev, eeprom } = mockAtkNearlink({ rate: 0x01, active: 2 });
+  const state = await atk.init(dev);
+
+  const rate = await atk.readRate(dev, state);
+  assert.equal(rate.value, 0x01);
+  assert.equal(rate.options.find(o => o.hz === 8000).raw, 0x40, "8000 Hz is 0x40 on this platform");
+
+  assert.equal(await atk.writeRate(dev, state, 0x08), 0x08);      // 125 Hz
+  assert.deepEqual([...eeprom.slice(0, 6)], [0x08, 0x4d, 8, 0x4d, 2, 0x53],
+    "value+complement pairs, profile count and active profile preserved");
 });
 
 test("atk: a device that does not echo the probe is rejected before any write", async () => {
