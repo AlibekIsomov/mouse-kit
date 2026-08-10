@@ -20,21 +20,28 @@
  *
  * DPI is a plain 16-bit value — no sensor lookup table needed, unlike Attack Shark.
  *
- * Transport: wired mice expose the packet as feature report 8. The Nearlink dongle
- * (seen on "Nearlink Mouse Dongle" VID 0x373b PID 0x10c9, ATK A9 SE) has no feature
- * report 8 — the same packets flow as input/output reports with ID 8 on the 0xff02
- * collection. The transport is picked from the report IDs the interface declares.
+ * Transport: wired mice expose the packet as feature report 8. The Nearlink
+ * devices (A9 SE dongle 0x373b:0x10c9, A9 SE wired 0x373b:0x1135) have no feature
+ * report 8 — they carry two input/output pairs on the 0xff02 collections, IDs 8
+ * and 19, and no public source documents which pipe carries the config. init()
+ * probes each pipe with the read-only GetFirmwareVersion and keeps the one that
+ * echoes; replies are accepted from either pipe, matched by the command byte.
  */
 
 const REPORT_ID = 8;
 const PACKET_SIZE = 64;
+const OUTPUT_IDS = [8, 19];
 
-const declares = (dev, kind) =>
-  dev.collections.some(c => (c[kind] ?? []).some(r => r.reportId === REPORT_ID));
+const outputIdsFor = dev =>
+  OUTPUT_IDS.filter(id => dev.collections.some(c => (c.outputReports ?? []).some(r => r.reportId === id)));
 
 /** Feature report 8 when the interface has one (or declares nothing, as older
- *  Chrome builds do) — otherwise the Nearlink output-report channel. */
-const usesOutputTransport = dev => declares(dev, "outputReports") && !declares(dev, "featureReports");
+ *  Chrome builds do) — otherwise the Nearlink output-report channels. */
+const usesOutputTransport = dev =>
+  outputIdsFor(dev).length > 0 &&
+  !dev.collections.some(c => (c.featureReports ?? []).some(r => r.reportId === REPORT_ID));
+
+const channels = new WeakMap();     // dev → the output report ID that answered the probe
 
 const CMD = {
   GET_FIRMWARE: 0x80,
@@ -57,17 +64,22 @@ async function command(dev, cmd, fill) {
   if (fill) fill(p);
 
   if (usesOutputTransport(dev)) {
+    const id = channels.get(dev) ?? outputIdsFor(dev)[0];
     return new Promise((resolve, reject) => {
       const finish = (fn, arg) => { clearTimeout(timer); dev.removeEventListener("inputreport", onReport); fn(arg); };
       const timer = setTimeout(() => finish(reject, new Error("no reply (timeout)")), 1000);
       const onReport = e => {
-        if (e.reportId !== REPORT_ID) return;             // id 19 carries something else
         const b = new Uint8Array(e.data.buffer);
-        if (b[0] !== cmd) return;                         // reply to a different command
+        if (b[0] !== cmd) {                               // capture material for unseen variants
+          if (OUTPUT_IDS.includes(e.reportId))
+            console.log(`[mousekit] atk: report ${e.reportId} replied 0x${b[0].toString(16)} to command 0x${cmd.toString(16)}`,
+              Array.from(b.slice(0, 12)));
+          return;
+        }
         finish(resolve, b);
       };
       dev.addEventListener("inputreport", onReport);
-      dev.sendReport(REPORT_ID, p).catch(err => finish(reject, err));
+      dev.sendReport(id, p).catch(err => finish(reject, err));
     });
   }
 
@@ -90,8 +102,19 @@ export const atk = {
     if (!dev.collections.some(c => c.usagePage >= 0xff00))
       throw new Error("Configuration interface not found — try picking the other entry for this mouse in the list.");
 
-    const r = await command(dev, CMD.GET_FIRMWARE).catch(() => null);
-    if (!r || r[0] !== CMD.GET_FIRMWARE)
+    let r = null;
+    if (usesOutputTransport(dev)) {
+      for (const id of outputIdsFor(dev)) {             // read-only probe on each pipe
+        channels.set(dev, id);
+        r = await command(dev, CMD.GET_FIRMWARE).catch(() => null);
+        if (r && r[0] === CMD.GET_FIRMWARE) break;
+        r = null;
+      }
+    } else {
+      r = await command(dev, CMD.GET_FIRMWARE).catch(() => null);
+      if (r && r[0] !== CMD.GET_FIRMWARE) r = null;
+    }
+    if (!r)
       throw new Error("The ATK protocol got no reply — this model may be on a different platform.");
 
     const config = await readConfig(dev);

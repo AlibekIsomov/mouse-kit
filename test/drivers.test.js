@@ -330,6 +330,18 @@ test("atk: the Nearlink dongle is driven over output report 8, not a feature rep
   }
 });
 
+test("atk: a Nearlink device that only answers on report 19 is found by the channel probe", async () => {
+  const { dev, stored } = mockAtkNearlink({ channel: 19 });
+  const state = await atk.init(dev);
+
+  assert.equal(await atk.writeDpi(dev, state, 1600), 1600);
+  assert.equal(stored.dpi[0], 1600);
+
+  const writes = dev.sent.filter(s => s.bytes[0] !== 0x80);       // everything after the probe
+  assert.ok(writes.length > 0, "nothing was written");
+  for (const s of writes) assert.equal(s.reportId, 19, "config must move to the pipe that answered");
+});
+
 test("atk: a device that does not echo the probe is rejected before any write", async () => {
   const dev = createMockDevice({ onFeatureRead: () => pad([0x00], 64) });
   await assert.rejects(() => atk.init(dev), /did not respond|no reply|got no reply/i);

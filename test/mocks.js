@@ -185,7 +185,7 @@ export function mockAtk({ dpi = 1600, rate = 0x01, stage = 0 } = {}) {
  * is an input/output pair — there is no feature report 8. Collections mirror the HID
  * map captured from the real dongle.
  */
-export function mockAtkNearlink({ dpi = 1600, rate = 0x01, stage = 0 } = {}) {
+export function mockAtkNearlink({ dpi = 1600, rate = 0x01, stage = 0, channel = 8 } = {}) {
   const stored = { dpi: [dpi, 0, 0, 0, 0, 0, 0, 0], rate, stage };
   const dev = createMockDevice({
     vendorId: 0x373b, productId: 0x10c9,
@@ -195,9 +195,9 @@ export function mockAtkNearlink({ dpi = 1600, rate = 0x01, stage = 0 } = {}) {
       { usagePage: 0xff04, usage: 0x02, featureReports: [{ reportId: 6 }] },
     ],
     onOutput({ reportId, bytes }) {
-      if (reportId !== 8) return null;
+      if (reportId !== channel) return null;              // the other pipe stays silent
       const reply = atkReply(stored, bytes);
-      return reply && { reportId: 8, bytes: reply };
+      return reply && { reportId: channel, bytes: reply };
     },
   });
   return { dev, stored };
