@@ -43,7 +43,7 @@ eq(new Set(ATK_RATES.map(r => r.raw)).size, 7, "atk codes unique");
 eq([8000, 1000, 125].map(hz => ATK_RATES.find(r => r.hz === hz).raw), [0x81, 0x01, 0x08], "atk codes");
 
 /* --- ATK Nearlink / V HUB (EEPROM platform) --- */
-eq(eeDpiEncode(1600), [31, 31, 8, 0x0f], "ee dpi encode 1600");
+eq(eeDpiEncode(1600), [31, 31, 0, 0x17], "ee dpi encode 1600");
 [50, 800, 1600, 12800, 12850, 26000].forEach(dpi =>
   eq(eeDpiDecode(eeDpiEncode(dpi)[0], eeDpiEncode(dpi)[2]), dpi, `ee dpi round-trip ${dpi}`));
 eq(Array.from(eePacket(0x08, 0, 6)).at(-1), 0x3f, "ee packet checksum");
@@ -55,7 +55,7 @@ eq(HYPERX_RATES.map(r => [r.raw, r.hz]), [[0, 125], [1, 250], [2, 500], [3, 1000
 eq([0x16e2, 0x028e, 0x048e].map(dpiStepFor), [50, 100, 100], "hyperx dpi step per pid");
 // hyperx-saga-control protocol-notes.md samples
 eq([400, 800, 1600, 3200].map(dpiToCode), [0x07, 0x0f, 0x1f, 0x3f], "hyperx gen2 dpi codes");
-eq(GEN2_RATES.map(r => 8000 / r.raw), [125, 250, 500, 1000], "hyperx gen2 rate = 8000/code");
+eq(GEN2_RATES.map(r => 8000 / r.raw), [125, 250, 500, 1000, 2000, 4000, 8000], "hyperx gen2 rate = 8000/code");
 
 /* --- devices.js --- */
 eq(buildVidMap([{ name: "A", vids: [1] }, { name: "B", vids: [1, 2] }]), { 1: "A / B", 2: "B" }, "vid map merge");

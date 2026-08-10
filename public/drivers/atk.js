@@ -107,18 +107,26 @@ export function eePacket(cmd, addr = 0, len = 0, data = []) {
   return p;
 }
 
-/** 4-byte DPI entry. `ex` names the 256-step block, `x` the position inside it. */
+/**
+ * 4-byte DPI entry [x, y, ex, crc]. `x` is the low byte of (dpi/50 − 1); `ex` marks
+ * the 256-step block as a multiple of 0x44, so the firmware's decode
+ * (⌊256·ex/0x44⌋ + x + 1)·50 recovers the value exactly.
+ *
+ * atk-hub-rs's encoder computes ex as ⌊0x44·steps/256⌋ — a precedence slip that
+ * yields nonzero ex below 12 850 DPI and made a real A9 SE misread its DPI pair
+ * (field report: cursor drifting on its own). Its decoder is the firmware-faithful
+ * one, and only ex = 0x44·⌊steps/256⌋ round-trips through it.
+ */
 export const eeDpiEncode = dpi => {
   const s = Math.round(dpi / 50) - 1;
   const x = s & 0xff;
-  const ex = Math.floor((0x44 * s) / 256);
+  const ex = 0x44 * (s >> 8);
   return [x, x, ex, (0x55 - x - x - ex) & 0xff];
 };
 
-export const eeDpiDecode = (x, ex) => {
-  const block = Math.max(0, Math.round((Math.round((256 * ex) / 0x44) - x) / 256));
-  return (x + 256 * block + 1) * 50;
-};
+/** The firmware's own decode — NOT the inverse of our encoder. A mis-encoded write
+ *  therefore reads back as a different number and triggers the automatic rollback. */
+export const eeDpiDecode = (x, ex) => (Math.floor((256 * ex) / 0x44) + x + 1) * 50;
 
 function eeCommand(dev, cmd, addr, len, data) {
   const p = eePacket(cmd, addr, len, data);

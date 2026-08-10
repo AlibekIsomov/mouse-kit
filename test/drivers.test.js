@@ -268,7 +268,9 @@ test("hyperx gen2: report rate codes are 8000/Hz and travel in the same config p
   const { dev, stored } = mockHyperXGen2();
   const state = await hyperx.init(dev);
   const rate = await hyperx.readRate(dev, state);
-  assert.deepEqual(rate.options.map(o => [o.hz, o.raw]), [[125, 0x40], [250, 0x20], [500, 0x10], [1000, 0x08]]);
+  assert.deepEqual(rate.options.map(o => [o.hz, o.raw]),
+    [[125, 0x40], [250, 0x20], [500, 0x10], [1000, 0x08], [2000, 0x04], [4000, 0x02], [8000, 0x01]]);
+  for (const o of rate.options) assert.equal(o.raw * o.hz, 8000, "every code obeys code = 8000/Hz");
 
   assert.equal(await hyperx.writeRate(dev, state, 0x40), 0x40);
   assert.equal(stored.configs.at(-1)[3], 0x40, "rate code sits at payload byte [3]");
@@ -348,11 +350,16 @@ test("atk nearlink: 16-byte EEPROM packets on output report 8, with the 0x55 che
     [0x08, 0, 0, 0, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x3f]);
 });
 
-test("atk nearlink: DPI entries round-trip through the 4-byte x/ex encoding", () => {
-  // 1600 DPI → steps 31: x = 31, ex = ⌊0x44·31/256⌋ = 8, crc = 0x55−31−31−8 = 0x0f
-  assert.deepEqual(eeDpiEncode(1600), [31, 31, 8, 0x0f]);
+test("atk nearlink: DPI entries round-trip through the firmware's own decode", () => {
+  // 1600 DPI → steps 31: x = 31, ex = 0 (below the 12 850 block), crc = 0x55−62 = 0x17.
+  // ex must be 0 here — the nonzero ex of atk-hub-rs's encoder is what corrupted a
+  // real A9 SE's DPI pair in the field.
+  assert.deepEqual(eeDpiEncode(1600), [31, 31, 0, 0x17]);
+  assert.deepEqual(eeDpiEncode(26000).slice(0, 3), [7, 7, 0x88], "26000 sits in the third block");
   for (const dpi of [50, 400, 800, 1600, 3200, 12800, 12850, 26000])
     assert.equal(eeDpiDecode(...[eeDpiEncode(dpi)[0], eeDpiEncode(dpi)[2]]), dpi, `round-trip ${dpi}`);
+  // The firmware decode exposes the old buggy encoding instead of hiding it.
+  assert.equal(eeDpiDecode(31, 8), 3100, "a mis-encoded 1600 reads back as 3100 → rollback fires");
 });
 
 test("atk nearlink: writeDpi rewrites only the active preset's 4-byte slot", async () => {
