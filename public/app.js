@@ -109,6 +109,7 @@ async function connect(showAll) {
   }
   if (!state) return unsupported(firstError?.message ?? "No interface answered.");
   if (state.warning) toast(state.warning, true);
+  renderSpecs(state);
 
   await loadDpi();
   await loadRate();
@@ -205,6 +206,16 @@ function armShotFallbacks(root) {
     img.addEventListener("error", () => { img.closest(".shot").innerHTML = MOUSE_SVG; }, { once: true }));
 }
 
+/** The specs card shows only what the driver actually read — never invented numbers. */
+function renderSpecs(state = {}) {
+  if ($("spec-battery-val")) $("spec-battery-val").textContent = state.battery != null ? state.battery + "%" : "—";
+  if ($("spec-battery-fill")) $("spec-battery-fill").style.width = (state.battery ?? 0) + "%";
+  if ($("spec-fw-val")) $("spec-fw-val").textContent = state.firmware ? "v" + state.firmware : "—";
+  if ($("spec-conn-val")) $("spec-conn-val").textContent = state.connLabel ?? "USB HID";
+  if ($("spec-fw-sub")) $("spec-fw-sub").textContent = state.firmware ? "reported by the mouse" : "not reported";
+  if ($("spec-conn-sub")) $("spec-conn-sub").textContent = state.connLabel ? "reported by the mouse" : "";
+}
+
 function renderDevice() {
   const brand = VENDORS[device.vendorId] || "Unknown brand";
   if ($("conn")) $("conn").textContent = "● " + brand;
@@ -219,6 +230,7 @@ function renderDevice() {
     ["Vendor ID", hex4(device.vendorId)],
     ["Product ID", hex4(device.productId)],
   ].map(([k, v]) => `<div class="row"><span>${k}</span><span>${esc(v)}</span></div>`).join("");
+  renderSpecs();                                  // "—" until the driver has read real values
   show("v-connect", false); show("v-brands", false);
   show("v-device-panel", true); show("v-device", true);
 }
@@ -538,6 +550,8 @@ function launchDemoForModel(brandName = "Attack Shark", modelName = "R11") {
   if ($("spec-battery-fill")) $("spec-battery-fill").style.width = "92%";
   if ($("spec-fw-val")) $("spec-fw-val").textContent = "v1.2.4";
   if ($("spec-conn-val")) $("spec-conn-val").textContent = "Wireless (2.4 GHz)";
+  if ($("spec-fw-sub")) $("spec-fw-sub").textContent = "demo values";
+  if ($("spec-conn-sub")) $("spec-conn-sub").textContent = "demo values";
 
   // Setup DPI Demo
   const range = $("dpi-range");

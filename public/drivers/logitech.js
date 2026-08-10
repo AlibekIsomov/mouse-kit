@@ -18,6 +18,8 @@ const SW_ID = 0x0a;                       // software id (1..15, must not be 0)
 const F_DPI = 0x2201;                     // Adjustable DPI
 const F_RATE = 0x8060;                    // Adjustable Report Rate
 const F_RATE_EXT = 0x8061;                // Extended Adjustable Report Rate (8K mice)
+const F_BATT = 0x1000;                    // Battery Unified Level Status (libratbag hidpp20.c)
+const F_BATT_UNI = 0x1004;                // Unified Battery — newer wireless mice
 
 // Function addresses, already in (functionIndex << 4) form.
 export const ADDR = {
@@ -32,7 +34,18 @@ export const ADDR = {
   RATE_EXT_GET_LIST: 0x10,
   RATE_EXT_GET: 0x20,
   RATE_EXT_SET: 0x30,
+  BATT_GET: 0x00,                         // 0x1000 fn 0: [0] = level %
+  BATT_UNI_GET: 0x10,                     // 0x1004 fn 1: [0] = state of charge %
 };
+
+/** Battery percentage, or null — wired mice simply lack both features. */
+async function readBattery(dev, index) {
+  for (const [id, addr] of [[F_BATT, ADDR.BATT_GET], [F_BATT_UNI, ADDR.BATT_UNI_GET]]) {
+    const f = await featureIndex(dev, index, id);
+    if (f) return hidpp(dev, { index, feature: f, addr }).then(r => r[0]).catch(() => null);
+  }
+  return null;
+}
 
 function hidpp(dev, { index, feature, addr, params = [], long = false }) {
   const reportId = long ? 0x11 : 0x10;
@@ -112,7 +125,8 @@ export const logitech = {
       const dpiF = await featureIndex(dev, index, F_DPI);
       const rrF = await featureIndex(dev, index, F_RATE);
       const rrExtF = rrF ? 0 : await featureIndex(dev, index, F_RATE_EXT);
-      if (dpiF || rrF || rrExtF) return { index, dpiF, rrF, rrExtF, connType: 0 };
+      if (dpiF || rrF || rrExtF)
+        return { index, dpiF, rrF, rrExtF, connType: 0, battery: await readBattery(dev, index) };
     }
 
     throw new Error(pinged

@@ -10,9 +10,10 @@ import { eeDpiEncode } from "../public/drivers/atk.js";
 const SW_ID = 0x0a;
 export const DPI_FEATURE = 1;
 export const RATE_FEATURE = 2;
+export const BATT_FEATURE = 3;
 
-/** Logitech: answers root, 0x2201 (DPI) and 0x8060 (report rate). */
-export function mockLogitech({ dpi = 800, rate = 1 } = {}) {
+/** Logitech: answers root, 0x2201 (DPI), 0x8060 (report rate) and optionally 0x1000 (battery). */
+export function mockLogitech({ dpi = 800, rate = 1, battery = null } = {}) {
   const stored = { dpi, rate };
 
   const dev = createMockDevice({
@@ -28,9 +29,13 @@ export function mockLogitech({ dpi = 800, rate = 1 } = {}) {
         if (address === (ADDR.ROOT_GET_PROTOCOL | SW_ID)) return short([0x04, 0x02, 0x5a]);
         if (address === (ADDR.ROOT_GET_FEATURE | SW_ID)) {
           const id = (bytes[3] << 8) | bytes[4];
-          return short([{ 0x2201: DPI_FEATURE, 0x8060: RATE_FEATURE }[id] ?? 0]);
+          const table = { 0x2201: DPI_FEATURE, 0x8060: RATE_FEATURE };
+          if (battery != null) table[0x1000] = BATT_FEATURE;
+          return short([table[id] ?? 0]);
         }
       }
+      if (feature === BATT_FEATURE && address === (ADDR.BATT_GET | SW_ID))
+        return short([battery, battery, 0x00]);
       if (feature === DPI_FEATURE) {
         if (address === (ADDR.DPI_GET_LIST | SW_ID)) return long([0, 0x01, 0x90, 0x03, 0x20, 0x06, 0x40, 0, 0]);
         if (address === (ADDR.DPI_GET | SW_ID)) return short([0, stored.dpi >> 8, stored.dpi & 0xff]);
@@ -62,6 +67,7 @@ export function mockRazer({ dpi = 800, rate = 1 } = {}) {
       const reply = args => pad([0x02, tid, 0, 0, 0, 0, cls, id, ...args], 90);
 
       if (cls === 0x00 && id === 0x81) return reply([1, 2]);                       // firmware
+      if (cls === 0x07 && id === 0x80) return reply([0, 179]);                     // battery 179/255 ≈ 70 %
       if (cls === 0x04 && id === 0x85) return reply([0, stored.dpi >> 8, stored.dpi & 0xff]);
       if (cls === 0x04 && id === 0x05) {
         stored.dpi = (last.bytes[9] << 8) | last.bytes[10];                        // args[1..2]
@@ -112,6 +118,7 @@ export function mockHyperX({ dpiSteps = [8, 16, 32, 64, 128], profile = 1, rate 
     onOutput({ bytes }) {
       const cmd = bytes[0];
       if (cmd === 0x53) return { reportId: 0, bytes: pad([0x53, 0, 0, 0, stored.profile, 0b11111], 64) };
+      if (cmd === 0x51) return { reportId: 0, bytes: pad([0x51, 0, 0, 0, 88, 1], 64) };   // heartbeat: 88 %, charging
       if (cmd === 0x50 && bytes[1] === 0x03) {
         const b = pad([0x50, 0x03], 64);
         stored.dpiSteps.forEach((v, i) => { b[10 + 2 * i] = v & 0xff; b[11 + 2 * i] = v >> 8; });
@@ -157,8 +164,8 @@ export function mockHyperXGen2({ battery = 0x63, mute = false } = {}) {
 function atkReply(stored, bytes) {
   const cmd = bytes[0];
   if (cmd === 0x80) return pad([0x80, 1, 2], 64);
-  // GetConfigData: [1] report rate, [2] active DPI stage
-  if (cmd === 0x82) return pad([0x82, stored.rate, stored.stage], 64);
+  // GetConfigData: [1] report rate, [2] active DPI stage, [8] battery level
+  if (cmd === 0x82) return pad([0x82, stored.rate, stored.stage, 0, 0, 0, 0, 0, 88, 1], 64);
   if (cmd === 0xa6) return pad([0xa6, ...stored.dpi.flatMap(d => [d & 0xff, d >> 8])], 64);
   if (cmd === 0x26) {
     stored.dpi[bytes[2]] = bytes[3] | (bytes[4] << 8);
@@ -207,6 +214,7 @@ export function mockAtkNearlink({ dpi = 1600, rate = 0x01, active = 0, connType 
       const reply = data => ({ reportId: 8, bytes: pad([cmd, 0, aHi, aLo, len, ...data], 16) });
       if (cmd === 0x12) return reply([3, 1]);                                   // GetMouseVersion
       if (cmd === 0x01) return reply([0, 0, 0, 0, 0x11, 0x22, connType, 0]);    // DownLoadData handshake
+      if (cmd === 0x04) return reply([78, 1, 41]);                              // battery: 78 %, charging, 4.1 V
       if (cmd === 0x08) return reply([...eeprom.slice(addr, addr + len)]);      // GetEEPROM
       if (cmd === 0x07) {                                                       // SetEEPROM
         eeprom.set(bytes.slice(5, 5 + len), addr);

@@ -47,7 +47,7 @@ const FORBIDDEN_AS_REPORTS = [0x05, 0x08, 0x09, 0x0c];
 /** ATK 0x0a = ResetDefaultSettings, wipes the user's whole configuration. */
 const FORBIDDEN_ATK_COMMANDS = [0x0a, 0x1e, 0x30];
 
-test("logitech: only DPI and report-rate features are ever requested", async () => {
+test("logitech: only DPI, report-rate and battery features are ever requested", async () => {
   const { dev } = mockLogitech();
   await exercise(logitech, dev);
 
@@ -56,7 +56,8 @@ test("logitech: only DPI and report-rate features are ever requested", async () 
       .filter(s => s.bytes[1] === 0x00 && s.bytes[2] === 0x0a)      // root → getFeature
       .map(s => (s.bytes[3] << 8) | s.bytes[4]),
   );
-  assert.deepEqual([...requested].sort((a, b) => a - b), [0x2201, 0x8060], "unexpected feature was looked up");
+  assert.deepEqual([...requested].sort((a, b) => a - b), [0x1000, 0x1004, 0x2201, 0x8060],
+    "unexpected feature was looked up");
 
   // 0x00c2 / 0x00c3 are the DFU (firmware update) features.
   for (const dfu of [0x00c2, 0x00c3]) assert.ok(!requested.has(dfu), "DFU feature must never be requested");
@@ -73,12 +74,12 @@ test("logitech: every packet targets root, DPI or report rate — nothing else",
   assert.deepEqual([...addresses].sort((a, b) => a - b), [0x0a, 0x1a, 0x2a, 0x3a]);
 });
 
-test("razer: only the four documented (class, id) pairs are sent", async () => {
+test("razer: only the documented (class, id) pairs are sent", async () => {
   const { dev } = mockRazer();
   await exercise(razer, dev);
 
   const used = new Set(dev.sent.map(s => `${s.bytes[6].toString(16)}/${s.bytes[7].toString(16)}`));
-  const allowed = new Set(["0/81", "0/85", "0/5", "4/85", "4/5"]);
+  const allowed = new Set(["0/81", "0/85", "0/5", "4/85", "4/5", "7/80"]);   // 7/80 = get battery
   for (const cmd of used) assert.ok(allowed.has(cmd), `unexpected razer command ${cmd}`);
 });
 
@@ -117,7 +118,7 @@ test("atk nearlink: only version/get/set commands, and SetEEPROM only at rate an
 
   const used = new Set(dev.sent.map(s => s.bytes[0]));
   for (const cmd of used)
-    assert.ok([0x01, 0x12, 0x08, 0x07].includes(cmd),   // handshake, version, get, set
+    assert.ok([0x01, 0x04, 0x12, 0x08, 0x07].includes(cmd),   // handshake, battery, version, get, set
       `unexpected EEPROM command 0x${cmd.toString(16)}`);
 
   // 0x0d EnterUSBUpgradeMode, 0x09 RestoreFactory, 0x05 dongle re-pairing — all
@@ -139,7 +140,7 @@ test("hyperx: only the five documented config commands — never LED, buttons or
   await exercise(hyperx, dev);
 
   const used = new Set(dev.sent.map(s => s.bytes[0]));
-  const allowed = new Set([0x50, 0x53, 0xd0, 0xd3, 0xde]);
+  const allowed = new Set([0x50, 0x51, 0x53, 0xd0, 0xd3, 0xde]);   // 0x51 = heartbeat (battery)
   for (const cmd of used) assert.ok(allowed.has(cmd), `unexpected hyperx command 0x${cmd.toString(16)}`);
 
   // Same report carries 0xd2 LED, 0xd4 button remap and 0xd5/0xd6 macros — a wrong

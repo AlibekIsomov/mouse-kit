@@ -37,6 +37,7 @@ test("razer: setDpi writes VARSTORE and the DPI on both axes", async () => {
   const state = await razer.init(dev);
   dev.sent.length = 0;
 
+  assert.equal(state.battery, 70, "openrazer 0x07/0x80: 179/255 rounds to 70 %");
   assert.equal(await razer.writeDpi(dev, state, 1600), 1600);
   assert.equal(stored.dpi, 1600);
 
@@ -195,6 +196,7 @@ test("hyperx: the Haste Wireless PIDs use 100-DPI hardware steps", async () => {
 test("hyperx: report rate is an index into 125/250/500/1000", async () => {
   const { dev, stored } = mockHyperX({ rate: 3 });
   const state = await hyperx.init(dev);
+  assert.equal(state.battery, 88, "heartbeat 0x51 byte [4] is the battery");
   const rate = await hyperx.readRate(dev, state);
   assert.deepEqual(rate.options.map(o => [o.raw, o.hz]), [[0, 125], [1, 250], [2, 500], [3, 1000]]);
   assert.equal(rate.value, 3);
@@ -325,6 +327,7 @@ test("atk: the active DPI stage comes from the device, not a hard-coded 0", asyn
   const { dev, stored } = mockAtk({ stage: 3 });
   const state = await atk.init(dev);
   assert.equal(state.stage, 3, "init must adopt the device's active stage");
+  assert.equal(state.battery, 88, "battery comes from GetConfigData byte [8]");
 
   await atk.writeDpi(dev, state, 3200);
   assert.equal(stored.dpi[3], 3200, "stage 3 must be the one written");
@@ -391,6 +394,8 @@ test("atk nearlink: the 4K dongle unlocks 2000/4000 but keeps 8000 hidden", asyn
   const { dev } = mockAtkNearlink({ connType: 1 });               // Dongle4K
   const state = await atk.init(dev);
   assert.equal(state.maxHz, 4000, "ceiling comes from the DownLoadData handshake");
+  assert.equal(state.battery, 78, "battery comes from the read-only 0x04 query");
+  assert.equal(state.connLabel, "Wireless — 4K dongle");
 
   const rate = await atk.readRate(dev, state);
   assert.deepEqual(rate.options.map(o => o.hz), [4000, 2000, 1000, 500, 250, 125]);

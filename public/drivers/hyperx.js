@@ -181,7 +181,9 @@ export const hyperx = {
     // older Pulsefire generation (Surge, FPS Pro, Core) speaks a different protocol.
     // Nothing that fails to echo these reads is ever written to.
     const s = await readState(dev);
-    return { step: dpiStepFor(dev.productId), cfg: s.cfg };
+    // Heartbeat [0x51]: battery % at [4], charging at [5] (santeri3700). Wired → silence.
+    const hb = await send(dev, [0x51], { reply: true }).catch(() => null);
+    return { step: dpiStepFor(dev.productId), cfg: s.cfg, battery: hb ? hb[4] : null };
   },
 
   async readDpi(dev, s) {

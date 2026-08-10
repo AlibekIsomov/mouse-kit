@@ -21,7 +21,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createMockDevice } from "./mock-hid.js";
-import { mockLogitech, DPI_FEATURE, RATE_FEATURE } from "./mocks.js";
+import { mockLogitech, DPI_FEATURE, RATE_FEATURE, BATT_FEATURE } from "./mocks.js";
 import { logitech, ADDR } from "../public/drivers/logitech.js";
 
 const SW_ID = 0x0a;
@@ -40,6 +40,16 @@ test("address byte is CMD | swId, never shifted twice", async () => {
   const distinct = new Set(addressesOf(dev));
   assert.ok(distinct.size > 1, "all addresses collapsed to one value — the <<4 bug is back");
   assert.ok(!addressesOf(dev).every(a => a === 0x0a), "every address became 0x0a");
+});
+
+test("battery comes from feature 0x1000 when the mouse has one, else null", async () => {
+  const withBatt = mockLogitech({ battery: 85 });
+  const state = await logitech.init(withBatt.dev);
+  assert.equal(state.battery, 85, "level is params[0] of fn 0");
+  assert.ok(withBatt.dev.sent.some(s => s.bytes[1] === BATT_FEATURE), "battery feature was read");
+
+  const wired = mockLogitech();                          // no 0x1000/0x1004 → office/wired mouse
+  assert.equal((await logitech.init(wired.dev)).battery, null);
 });
 
 test("setSensorDpi puts the exact documented bytes on the wire", async () => {

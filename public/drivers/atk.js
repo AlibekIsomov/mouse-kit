@@ -73,16 +73,16 @@ async function command(dev, cmd, fill) {
   return b.length > PACKET_SIZE ? b.subarray(1) : b;    // drop the report ID if it was echoed back
 }
 
-/** Current report rate and active DPI stage, or null if the device will not say. */
+/** Current report rate, active DPI stage and battery, or null if the device will not say. */
 async function readConfig(dev) {
   const r = await command(dev, CMD.GET_CONFIG).catch(() => null);
   if (!r || r[0] !== CMD.GET_CONFIG) return null;
-  return { rate: r[1], stage: Math.min(Math.max(r[2], 0), 7) };   // stage is a 0-based index
+  return { rate: r[1], stage: Math.min(Math.max(r[2], 0), 7), battery: r[8] };
 }
 
 /* ------------------------------- EEPROM platform ------------------------------- */
 
-const EE = { HANDSHAKE: 0x01, GET_VERSION: 0x12, GET: 0x08, SET: 0x07 };
+const EE = { HANDSHAKE: 0x01, BATTERY: 0x04, GET_VERSION: 0x12, GET: 0x08, SET: 0x07 };
 const EE_ADDR = { INFO: 0x0000, DPI_PAIRS: [0x0c, 0x14, 0x1c, 0x24] };
 
 /**
@@ -92,6 +92,10 @@ const EE_ADDR = { INFO: 0x0000, DPI_PAIRS: [0x0c, 0x14, 0x1c, 0x24] };
  *   0 Dongle1K  1 Dongle4K  2 Wired1K  3 Wired8K  4 Dongle2K  5 Dongle8K
  */
 export const EE_MAX_HZ = { 0: 1000, 1: 4000, 2: 1000, 3: 8000, 4: 2000, 5: 8000 };
+export const EE_CONN_LABEL = {
+  0: "Wireless — 1K dongle", 1: "Wireless — 4K dongle", 2: "Wired",
+  3: "Wired — 8K", 4: "Wireless — 2K dongle", 5: "Wireless — 8K dongle",
+};
 
 export const EE_RATES = [
   { raw: 0x40, hz: 8000 }, { raw: 0x20, hz: 4000 }, { raw: 0x10, hz: 2000 },
@@ -198,10 +202,13 @@ export const atk = {
       if (!v)
         throw new Error("The ATK protocol got no reply — if the mouse is asleep, move it and reconnect.");
       const dl = await eeCommand(dev, EE.HANDSHAKE, 0, 8).catch(() => null);
+      const bat = await eeCommand(dev, EE.BATTERY).catch(() => null);   // data[0] = %, read-only
       return {
         proto: "ee",
         firmware: v[5] + "." + v[6],
         maxHz: EE_MAX_HZ[dl?.[11]] ?? 1000,     // connection type sits at data[6] = byte [11]
+        connLabel: EE_CONN_LABEL[dl?.[11]] ?? null,
+        battery: bat ? bat[5] : null,
       };
     }
 
@@ -210,7 +217,7 @@ export const atk = {
       throw new Error("The ATK protocol got no reply — this model may be on a different platform.");
 
     const config = await readConfig(dev);
-    return { stage: config?.stage ?? 0, firmware: r[1] + "." + r[2] };
+    return { stage: config?.stage ?? 0, firmware: r[1] + "." + r[2], battery: config?.battery ?? null };
   },
 
   async readDpi(dev, s) {

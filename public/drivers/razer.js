@@ -49,7 +49,12 @@ export const razer = {
 
     for (const tid of TRANSACTION_IDS) {
       const r = await command(dev, tid, 0x00, 0x81, 0x02).catch(() => null);   // firmware version
-      if (r) return { tid, firmware: r[0] + "." + r[1] };
+      if (r) {
+        // openrazer razer_chroma_misc_get_battery_level: class 0x07 id 0x80,
+        // level at args[1] scaled 0..255. Wired models answer "not supported".
+        const batt = await command(dev, tid, 0x07, 0x80, 0x02).catch(() => null);
+        return { tid, firmware: r[0] + "." + r[1], battery: batt ? Math.round((batt[1] / 255) * 100) : null };
+      }
     }
     throw new Error("Razer did not respond (no working transaction ID).");
   },
