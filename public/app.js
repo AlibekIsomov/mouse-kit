@@ -231,6 +231,7 @@ function writeAllowed() {
   if (isDemoMode) return true;
   if (!writeEnabled) {
     toast("Read-only — turn on “Allow changes” first", true);
+    $("v-safety").scrollIntoView({ behavior: "smooth", block: "center" });   // the switch lives there
     return false;
   }
   if (!state.needsConfirm || state.confirmed) return true;

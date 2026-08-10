@@ -8,7 +8,7 @@
  *
  * Hardening notes:
  *   - every request handler is wrapped, so a malformed URL cannot kill the process
- *   - /api/report is rate limited per IP and globally, and the dedupe set is capped
+ *   - /api/report is rate limited per IP and globally
  *   - only ./public is reachable; the resolved path must stay inside it
  *   - strict CSP, nosniff and frame-ancestors 'none' on every response
  */
@@ -28,7 +28,6 @@ const MAX_BODY = 4096;
 const POSTS_PER_IP = 10;            // per minute, per route
 const REPORTS_GLOBAL = 60;          // per hour, protects the Telegram chat from a flood
 const SUGGESTIONS_GLOBAL = 40;      // per hour
-const MAX_REMEMBERED = 5000;        // cap the dedupe set so it cannot exhaust memory
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -73,7 +72,6 @@ const SECURITY_HEADERS = {
 const ipHits = new Map();           // "route|ip" → { count, resetAt }
 const globalHits = { count: 0, resetAt: 0 };
 const suggestHits = { count: 0, resetAt: 0 };
-const remembered = new Set();       // "vid:pid" already reported
 
 function overLimit(bucket, max, windowMs, now) {
   if (now > bucket.resetAt) { bucket.count = 0; bucket.resetAt = now + windowMs; }
@@ -164,13 +162,10 @@ async function handleReport(req, res) {
   if (!checked.ok) return send(res, 400, checked.error);
   const d = checked.value;
 
-  // Repeat identical reports stay silent, but a different outcome or a different
-  // failure for the same mouse is new information and goes through.
-  const key = `${d.vendorId}:${d.productId}:${d.outcome}:${d.reason.slice(0, 60)}`;
-  if (!remembered.has(key) && !overLimit(globalHits, REPORTS_GLOBAL, 3600_000, Date.now())) {
-    if (remembered.size >= MAX_REMEMBERED) remembered.clear();
-    remembered.add(key);
-
+  // ponytail: no dedupe while the beta drivers are being verified in the field —
+  // every attempt is data. The per-IP and global-hourly caps still hold the line;
+  // bring back a `vid:pid:outcome` dedupe set if the chat gets noisy.
+  if (!overLimit(globalHits, REPORTS_GLOBAL, 3600_000, Date.now())) {
     telegram([
       d.outcome === "connected" ? "✅ <b>Mouse connected</b>" : "🖱 <b>New unsupported mouse</b>",
       `Name: <code>${escapeHtml(d.productName || "—")}</code>`,
